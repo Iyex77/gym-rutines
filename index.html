@@ -40,7 +40,13 @@ body{
    y luego se puede arrastrar de lado. Se fuerza en TODOS los campos. */
 input,select,textarea{font-family:inherit;font-size:16px!important;color:inherit;max-width:100%}
 button{font-family:inherit;font-size:16px;color:inherit}
-input[type=date]{min-width:0}
+/* iOS da a los campos de fecha/hora un ancho intrínseco propio que se salta
+   width:100% y desborda la pantalla; hay que anular su apariencia nativa */
+input[type=date],input[type=time],input[type=datetime-local]{
+  -webkit-appearance:none;appearance:none;
+  display:block;width:100%;min-width:0;max-width:100%;box-sizing:border-box}
+input[type=date]::-webkit-date-and-time-value{text-align:left;margin:0}
+input[type=date]::-webkit-calendar-picker-indicator{margin:0;padding:0}
 button{background:none;border:none;cursor:pointer}
 .mono{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
 
@@ -49,11 +55,12 @@ button{background:none;border:none;cursor:pointer}
   padding-top:calc(var(--safe-t) + 4px);overscroll-behavior:contain;
   padding-left:var(--safe-l);padding-right:var(--safe-r);
   /* hueco para que la píldora no tape el final del contenido */
-  padding-bottom:calc(104px + var(--vgap, 0px))}
+  padding-bottom:104px}
 .screen{display:none;animation:fade .18s ease}
 .screen.on{display:block}
 @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-.wrap{padding:0 16px}
+.wrap{padding:0 16px;max-width:100%;overflow-x:clip}
+img,svg,table{max-width:100%}
 
 .topbar{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;padding:14px 16px 16px}
 .topbar h1{font-size:26px;font-weight:800;letter-spacing:-.6px;line-height:1.1}
@@ -69,8 +76,7 @@ nav{position:fixed;left:50%;transform:translateX(-50%);
   /* offset fijo, SIN sumar la zona segura: el inset de iOS resuelve mucho
      mayor de lo esperado y dejaba la píldora flotando a media pantalla.
      La app de Japón la ancla igual y es la que queda bien. */
-  /* --vgap lo calcula fitViewport(): 0 salvo que iOS recorte el viewport */
-  bottom:calc(10px - var(--vgap, 0px));
+  bottom:10px;
   width:min(94vw,430px);
   z-index:90;
   background:rgba(26,26,32,.9);backdrop-filter:blur(22px) saturate(1.5);
@@ -1770,24 +1776,6 @@ function renderSyncPill() {
   if (busyEditing()) return;
   if (UI.tab === 'prog' || UI.tab === 'set') { try { render(); } catch (e) { } }
 }
-
-/* Red de seguridad para iOS instalado en pantalla de inicio: si el viewport no
-   llega al fondo físico (pasa cuando iOS guardó los metadatos de la app antes de
-   que existiera viewport-fit=cover), se compensa la diferencia para que la
-   píldora del menú no quede flotando a media pantalla. */
-function fitViewport() {
-  var gap = 0;
-  try {
-    if (navigator.standalone && window.screen && window.screen.height) {
-      var d = window.screen.height - window.innerHeight;
-      if (d > 2 && d < 140) gap = d;          /* franja plausible de zona segura */
-    }
-  } catch (e) { }
-  document.documentElement.style.setProperty('--vgap', gap + 'px');
-}
-fitViewport();
-window.addEventListener('resize', fitViewport);
-window.addEventListener('orientationchange', function () { setTimeout(fitViewport, 250); });
 
 /* arranque */
 loadLocal();
