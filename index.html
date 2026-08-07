@@ -2,10 +2,10 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Gym">
 <meta name="theme-color" content="#0d0d0f">
 <meta name="robots" content="noindex,nofollow">
@@ -21,20 +21,19 @@ script,template{display:none!important}   /* que nunca cuenten como item flex */
   --acc:#ff6a1f; --acc-soft:rgba(255,106,31,.13); --acc-mid:rgba(255,106,31,.28);
   --txt:#f2f2f5; --dim:#8a8a96; --dim2:#5c5c68;
   --ok:#3ddc84; --warn:#ffc53d; --bad:#ff5a5a;
-  --safe-t:env(safe-area-inset-top,0px); --safe-b:env(safe-area-inset-bottom,0px);
-  --safe-l:env(safe-area-inset-left,0px); --safe-r:env(safe-area-inset-right,0px);
 }
-html{height:100%;background:var(--bg)}
+html{background:var(--bg);overflow-x:hidden;-webkit-text-size-adjust:100%}
 body{
   background:var(--bg); color:var(--txt);
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter",system-ui,sans-serif;
   -webkit-font-smoothing:antialiased; overscroll-behavior-y:none;
   font-size:15px; line-height:1.45;
-  /* el body se queda como bloque normal: fijarlo era un caso raro en Safari.
-     Quien se ancla al viewport son #app y nav, ambos position:fixed. */
-  height:100%; overflow:hidden; margin:0;
-  width:100%; max-width:100%;
-  touch-action:pan-y;            /* sin pellizco de zoom ni arrastre lateral */
+  /* Igual que la app de Japón: scrollea la PÁGINA, no un contenedor interno.
+     El montaje anterior (body con overflow:hidden + #app fijo a pantalla
+     completa) es lo que dejaba la franja negra abajo en el iPhone.
+     Tampoco se usan los insets del sistema, igual que allí. */
+  margin:0; width:100%; max-width:100%; overflow-x:hidden;
+  padding-bottom:104px;          /* hueco para la píldora del menú */
 }
 /* 16px es el mínimo: por debajo, iOS amplía la página al enfocar el campo
    y luego se puede arrastrar de lado. Se fuerza en TODOS los campos. */
@@ -51,11 +50,7 @@ button{background:none;border:none;cursor:pointer}
 .mono{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
 
 /* ---------- shell ---------- */
-#app{position:fixed;top:0;right:0;bottom:0;left:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;
-  padding-top:calc(var(--safe-t) + 4px);overscroll-behavior:contain;
-  padding-left:var(--safe-l);padding-right:var(--safe-r);
-  /* hueco para que la píldora no tape el final del contenido */
-  padding-bottom:104px}
+#app{padding-top:4px;overflow-x:hidden}
 .screen{display:none;animation:fade .18s ease}
 .screen.on{display:block}
 @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
@@ -76,7 +71,7 @@ nav{position:fixed;left:50%;transform:translateX(-50%);
   /* offset fijo, SIN sumar la zona segura: el inset de iOS resuelve mucho
      mayor de lo esperado y dejaba la píldora flotando a media pantalla.
      La app de Japón la ancla igual y es la que queda bien. */
-  bottom:10px;
+  bottom:12px;
   width:min(94vw,430px);
   z-index:90;
   background:rgba(26,26,32,.9);backdrop-filter:blur(22px) saturate(1.5);
@@ -231,7 +226,7 @@ select.sel:focus{outline:none;border-color:var(--acc)}
 .sheet-bg{position:absolute;inset:0;background:rgba(0,0,0,.65);backdrop-filter:blur(3px);animation:fade .2s}
 .sheet-c{position:absolute;left:0;right:0;bottom:0;max-height:92vh;overflow-y:auto;
   background:var(--surface);border-radius:22px 22px 0 0;border-top:1px solid var(--line);
-  padding:8px 16px max(24px, var(--safe-b));animation:up .26s cubic-bezier(.32,.72,0,1)}
+  padding:8px 16px 26px;animation:up .26s cubic-bezier(.32,.72,0,1)}
 @keyframes up{from{transform:translateY(100%)}to{transform:none}}
 .grab{width:36px;height:4px;border-radius:2px;background:var(--line2);margin:6px auto 14px}
 .sheet-h{font-size:19px;font-weight:800;letter-spacing:-.4px;margin-bottom:4px}
@@ -271,7 +266,7 @@ select.sel:focus{outline:none;border-color:var(--acc)}
 .lb .cap{color:var(--dim);font-size:13px;font-weight:600;text-align:center}
 
 /* toast */
-#toast{position:fixed;left:50%;transform:translateX(-50%) translateY(-14px);top:calc(var(--safe-t) + 12px);
+#toast{position:fixed;left:50%;transform:translateX(-50%) translateY(-14px);top:14px;
   z-index:400;background:var(--card2);border:1px solid var(--line2);border-radius:13px;
   padding:11px 17px;font-size:13.5px;font-weight:600;opacity:0;transition:.25s;pointer-events:none;
   max-width:88vw;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.5)}
@@ -640,10 +635,10 @@ function pushRemote(force) {
   }, force ? 0 : 700);
 }
 
-/* el contenedor con scroll es #app, no la ventana */
-function scrollTop() { var a = document.getElementById('app'); if (a) a.scrollTop = 0; }
-function scrollPos() { var a = document.getElementById('app'); return a ? a.scrollTop : 0; }
-function scrollSet(y) { var a = document.getElementById('app'); if (a) a.scrollTop = y; }
+/* scrollea la página entera, como en la app de Japón */
+function scrollTop() { try { window.scrollTo(0, 0); } catch (e) { } }
+function scrollPos() { return window.pageYOffset || document.documentElement.scrollTop || 0; }
+function scrollSet(y) { try { window.scrollTo(0, y); } catch (e) { } }
 
 /* ---------- toast ---------- */
 var toastT;
@@ -673,14 +668,21 @@ function topSet(entry) {
 function sessionFilled(s) { return (s.entries || []).some(function (e) { return (e.sets || []).some(function (st) { return st.kg || st.reps; }); }); }
 
 /* último registro de un ejercicio por nombre (para mostrar "la vez pasada") */
-function lastFor(exName, beforeId, beforeDate) {
+/* Busca la última vez que se hizo un ejercicio. Empareja primero por id del
+   ejercicio y luego por nombre: así, si renombras un ejercicio, sigue
+   arrastrando su historial en vez de empezar de cero. */
+function lastFor(exName, beforeId, beforeDate, exId) {
   var ss = liveSessions();   // ya viene ordenado de más reciente a más antiguo
+  var lleno = function (e) { return e && (e.sets || []).some(function (st) { return st.kg || st.reps; }); };
   for (var i = 0; i < ss.length; i++) {
     if (beforeId && ss[i].id === beforeId) continue;
     // al corregir una sesión antigua, la referencia debe ser anterior a ella, no posterior
     if (beforeDate && ss[i].date > beforeDate) continue;
-    var e = (ss[i].entries || []).find(function (x) { return x.name === exName; });
-    if (e && (e.sets || []).some(function (st) { return st.kg || st.reps; })) return { s: ss[i], e: e };
+    var ents = ss[i].entries || [];
+    var e = null;
+    if (exId) e = ents.find(function (x) { return x.exid === exId && lleno(x); });
+    if (!e) e = ents.find(function (x) { return x.name === exName && lleno(x); });
+    if (e) return { s: ss[i], e: e };
   }
   return null;
 }
@@ -781,7 +783,7 @@ function startSession(rid) {
     entries: (r.ex || []).map(function (e) {
       /* se arrastran los pesos de la última vez: así solo hay que escribir
          si cambia algo. Quedan marcados como "sin confirmar" hasta que los toques. */
-      var prev = lastFor(e.name, null, todayISO());
+      var prev = lastFor(e.name, null, todayISO(), e.id);
       var prevSets = prev ? prev.e.sets.filter(function (x) { return x.kg || x.reps; }) : [];
       var n = Math.max(1, e.sets || 3, prevSets.length);
       var sets = [];
@@ -790,7 +792,7 @@ function startSession(rid) {
         sets.push(p ? { kg: p.kg, reps: p.reps } : { kg: '', reps: '' });
       }
       return {
-        name: e.name, img: e.img || '', icon: e.icon || 'dumbbell', rest: e.rest || 60, note: '',
+        name: e.name, exid: e.id, img: e.img || '', icon: e.icon || 'dumbbell', rest: e.rest || 60, note: '',
         sets: sets,
         pre: prevSets.length > 0,
         touched: false,
@@ -830,7 +832,7 @@ function viewSession() {
   h += '<div class="sect">Ejercicios</div>';
 
   s.entries.forEach(function (e, i) {
-    var prev = lastFor(e.name, s.id, s.date);
+    var prev = lastFor(e.name, s.id, s.date, e.exid);
     var hasVals = (e.sets || []).some(function (st) { return st.kg || st.reps; });
     var pend = e.pre && !e.touched;                 /* precargado, sin confirmar */
     var conf = hasVals && !pend;                    /* confirmado de verdad */
@@ -1192,15 +1194,17 @@ function delRoutine() {
    Pantalla: HISTORIAL
    ============================================================ */
 /* mejor serie del mismo ejercicio en la sesión anterior a esta */
-function prevTop(exName, s) {
+function prevTop(exName, s, exId) {
   var ss = liveSessions();
   for (var i = 0; i < ss.length; i++) {
     var o = ss[i];
     if (o.id === s.id) continue;
     if (o.date > s.date) continue;
     if (o.date === s.date && (o.mt || 0) >= (s.mt || 0)) continue;
-    var e = (o.entries || []).find(function (x) { return x.name === exName; });
-    if (e && topSet(e) > 0) return topSet(e);
+    var ents = o.entries || [], e = null;
+    if (exId) e = ents.find(function (x) { return x.exid === exId && topSet(x) > 0; });
+    if (!e) e = ents.find(function (x) { return x.name === exName && topSet(x) > 0; });
+    if (e) return topSet(e);
   }
   return null;
 }
@@ -1241,7 +1245,7 @@ function viewHist() {
     var filled = (s.entries || []).filter(function (e) { return topSet(e) > 0; });
     var mejoras = 0, bajadas = 0;
     filled.forEach(function (e) {
-      var pv = prevTop(e.name, s); if (pv == null) return;
+      var pv = prevTop(e.name, s, e.exid); if (pv == null) return;
       if (topSet(e) > pv) mejoras++; else if (topSet(e) < pv) bajadas++;
     });
 
@@ -1263,7 +1267,7 @@ function viewHist() {
       });
       h += '<div class="hrow"><span class="hn">' + esc(e.name) + '</span>' +
         '<span class="hv">' + best + ' kg' + (bestReps ? ' × ' + bestReps : '') + '</span>' +
-        deltaHTML(best, prevTop(e.name, s)) + '</div>';
+        deltaHTML(best, prevTop(e.name, s, e.exid)) + '</div>';
     });
     h += '</div>';
 
@@ -1624,8 +1628,57 @@ function viewSet() {
     '<div style="height:8px"></div><button class="btn btn-d sm" onclick="resetAll()">Borrar todo y empezar de cero</button>' +
     '</div>';
 
+  h += '<div class="sect">Diagnóstico de pantalla</div>' +
+    '<div class="card" style="padding:15px">' +
+    '<div style="font-size:12.5px;color:var(--dim);line-height:1.6;margin-bottom:13px">' +
+    'Para averiguar por qué queda franja negra abajo. Haz captura de estos valores.</div>' +
+    '<div id="diag" class="mono" style="font-size:12px;line-height:1.9;color:var(--txt);' +
+    'background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px">midiendo…</div>' +
+    '<div style="height:9px"></div>' +
+    '<button class="btn btn-n sm" onclick="copiarDiag()">Copiar valores</button>' +
+    '</div>';
+
   h += '<div style="text-align:center;color:var(--dim2);font-size:11px;padding:22px 0 6px">Dispositivo ' + SELF_ID.slice(1, 7) + '</div></div>';
   return h;
+}
+
+/* Mide lo que hace de verdad este dispositivo. La clave es 'inset abajo':
+   si vale 0 en un iPhone con indicador de inicio, viewport-fit=cover NO está
+   activo → hay que borrar el icono de la pantalla de inicio y volver a añadirlo. */
+function medirPantalla() {
+  var probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;bottom:0;left:0;width:1px;height:env(safe-area-inset-bottom,0px);pointer-events:none;opacity:0';
+  document.body.appendChild(probe);
+  var insetB = probe.getBoundingClientRect().height;
+  probe.remove();
+
+  var vv = window.visualViewport;
+  return {
+    'Modo app': (navigator.standalone === true ? 'sí (icono)' : navigator.standalone === false ? 'no (Safari)' : 'desconocido'),
+    'Pantalla': (window.screen ? window.screen.width + ' × ' + window.screen.height : '?'),
+    'Ventana': window.innerWidth + ' × ' + window.innerHeight,
+    'Viewport visual': vv ? Math.round(vv.width) + ' × ' + Math.round(vv.height) : 'no disponible',
+    'Inset abajo': Math.round(insetB) + ' px',
+    'Diferencia': (window.screen ? (window.screen.height - window.innerHeight) : '?') + ' px',
+    'Píxel ratio': window.devicePixelRatio
+  };
+}
+function pintarDiag() {
+  var el = document.getElementById('diag'); if (!el) return;
+  var m = medirPantalla();
+  el.innerHTML = Object.keys(m).map(function (k) {
+    var val = String(m[k]);
+    var ojo = (k === 'Inset abajo' && parseFloat(val) === 0) || (k === 'Diferencia' && parseFloat(val) > 2);
+    return '<div style="display:flex;justify-content:space-between;gap:10px">' +
+      '<span style="color:var(--dim2)">' + k + '</span>' +
+      '<span style="' + (ojo ? 'color:var(--warn);font-weight:700' : '') + '">' + esc(val) + '</span></div>';
+  }).join('');
+}
+function copiarDiag() {
+  var m = medirPantalla();
+  var t = Object.keys(m).map(function (k) { return k + ': ' + m[k]; }).join('\n');
+  if (navigator.clipboard) navigator.clipboard.writeText(t).then(function () { toast('Copiado', 'ok'); }, function () { prompt('Copia esto:', t); });
+  else prompt('Copia esto:', t);
 }
 
 function randomRoom() {
@@ -1751,6 +1804,7 @@ function render() {
   document.getElementById('app').innerHTML = '<div class="screen on">' + body + '</div>';
   renderNav();
   if (UI.tab === 'prog' && typeof scrollCalEnd === 'function') setTimeout(scrollCalEnd, 0);
+  if (UI.tab === 'set' && typeof pintarDiag === 'function') setTimeout(pintarDiag, 0);
 }
 function renderNav() {
   var hide = (UI.tab === 'session' || UI.tab === 'redit');
