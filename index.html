@@ -33,16 +33,18 @@ body{
   /* fijado al viewport: en modo app de iOS, 100dvh no siempre coincide con la
      pantalla real y dejaba un hueco negro bajo el menú */
   position:fixed; top:0; right:0; bottom:0; left:0;
-  display:flex; flex-direction:column; overflow:hidden;
+  overflow:hidden;
 }
 input,select,textarea,button{font-family:inherit;font-size:16px;color:inherit}
 button{background:none;border:none;cursor:pointer}
 .mono{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
 
 /* ---------- shell ---------- */
-#app{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
-  padding-top:calc(var(--safe-t) + 4px);padding-bottom:22px;overscroll-behavior:contain;
-  padding-left:var(--safe-l);padding-right:var(--safe-r)}
+#app{position:absolute;top:0;right:0;bottom:0;left:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding-top:calc(var(--safe-t) + 4px);overscroll-behavior:contain;
+  padding-left:var(--safe-l);padding-right:var(--safe-r);
+  /* hueco para que la píldora no tape el final del contenido */
+  padding-bottom:calc(96px + var(--safe-b))}
 .screen{display:none;animation:fade .18s ease}
 .screen.on{display:block}
 @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
@@ -56,14 +58,21 @@ button{background:none;border:none;cursor:pointer}
 .icon-btn:active{background:var(--card2)}
 
 /* ---------- bottom nav ---------- */
-nav{flex:0 0 auto;z-index:60;
-  background:rgba(20,20,24,.96);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-  border-top:1px solid var(--line);
-  /* max() en vez de sumar: el inset ya reserva sitio para el indicador de inicio */
-  padding:7px 6px max(7px, var(--safe-b));
+/* píldora flotante, igual que en la app de Japón: al no llegar al borde,
+   la zona segura del indicador de inicio nunca descuadra nada */
+nav{position:fixed;left:50%;transform:translateX(-50%);
+  bottom:calc(var(--safe-b) + 10px);
+  width:min(94vw,430px);
+  z-index:90;
+  background:rgba(26,26,32,.9);backdrop-filter:blur(22px) saturate(1.5);
+  -webkit-backdrop-filter:blur(22px) saturate(1.5);
+  border:1px solid var(--line2);border-radius:21px;
+  box-shadow:0 10px 34px rgba(0,0,0,.5);
+  padding:8px 6px;
   display:grid;grid-template-columns:repeat(4,1fr)}
-nav button{display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px 0;
-  color:var(--dim2);font-size:10.5px;font-weight:600;letter-spacing:.1px;transition:color .15s}
+nav button{display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 0;
+  color:var(--dim2);font-size:10.5px;font-weight:600;letter-spacing:.1px;transition:color .15s;
+  border-radius:13px}
 nav button .ic{display:flex;line-height:1;opacity:.62;transition:.15s}
 nav button.on{color:var(--acc)}
 nav button.on .ic{opacity:1;transform:translateY(-1px)}
@@ -89,6 +98,10 @@ nav button.on .ic{opacity:1;transform:translateY(-1px)}
 /* exercise row */
 .ex{background:var(--card);border:1px solid var(--line);border-radius:16px;margin-bottom:10px;overflow:hidden}
 .ex.done{border-color:rgba(61,220,132,.45)}
+.ex.pend{border-style:dashed;border-color:var(--line2)}
+.pill-pre{font-size:9.5px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;
+  background:var(--card2);color:var(--dim2);border-radius:5px;padding:2px 6px;flex:0 0 auto}
+.inp.pre{color:var(--dim);border-style:dashed}
 .ex-h{display:flex;align-items:center;gap:12px;padding:12px 13px}
 .ex-img{width:58px;height:58px;border-radius:12px;object-fit:cover;background:#fff;flex:0 0 auto}
 .ex-emo{width:58px;height:58px;border-radius:12px;background:var(--card2);border:1px solid var(--line);
@@ -738,9 +751,22 @@ function startSession(rid) {
   UI.sess = {
     id: uid('s'), date: todayISO(), rid: r.id, rname: r.name, ricon: r.icon || 'dumbbell', rcolor: r.color || 'orange', mt: now(),
     entries: (r.ex || []).map(function (e) {
+      /* se arrastran los pesos de la última vez: así solo hay que escribir
+         si cambia algo. Quedan marcados como "sin confirmar" hasta que los toques. */
+      var prev = lastFor(e.name, null, todayISO());
+      var prevSets = prev ? prev.e.sets.filter(function (x) { return x.kg || x.reps; }) : [];
+      var n = Math.max(1, e.sets || 3, prevSets.length);
+      var sets = [];
+      for (var i = 0; i < n; i++) {
+        var p = prevSets[i] || prevSets[prevSets.length - 1];
+        sets.push(p ? { kg: p.kg, reps: p.reps } : { kg: '', reps: '' });
+      }
       return {
         name: e.name, img: e.img || '', icon: e.icon || 'dumbbell', rest: e.rest || 60, note: '',
-        sets: Array.from({ length: Math.max(1, e.sets || 3) }, function () { return { kg: '', reps: '' }; }),
+        sets: sets,
+        pre: prevSets.length > 0,
+        touched: false,
+        prevDate: prev ? prev.s.date : '',
         target: (e.sets || 3) + '×' + (e.reps || 12) + (e.note ? ' · ' + e.note : '')
       };
     })
@@ -750,7 +776,9 @@ function startSession(rid) {
 function openSession(sid) {
   var s = liveSessions().find(function (x) { return x.id === sid; });
   if (!s) return;
-  UI.sess = JSON.parse(JSON.stringify(s)); UI.isNew = false; UI.tab = 'session'; render(); scrollTop();
+  UI.sess = JSON.parse(JSON.stringify(s));
+  UI.sess.entries.forEach(function (e) { e.pre = false; e.touched = true; });
+  UI.isNew = false; UI.tab = 'session'; render(); scrollTop();
 }
 
 function viewSession() {
@@ -763,16 +791,28 @@ function viewSession() {
   h += '<div class="fld"><label>Fecha de la sesión</label><input type="date" value="' + esc(s.date) +
     '" onchange="UI.sess.date=this.value"></div>';
 
+  var pendientes = s.entries.filter(function (e) { return e.pre && !e.touched; });
+  if (pendientes.length) {
+    h += '<div class="banner">Los pesos vienen puestos de tu última sesión. ' +
+      '<b>Solo tienes que escribir donde cambie algo</b>; lo que toques queda confirmado. ' +
+      'Quedan ' + pendientes.length + ' sin confirmar.</div>' +
+      '<button class="btn btn-ok sm" style="margin-bottom:16px" onclick="confirmAll()">✓ Todo igual que la última vez</button>';
+  }
+
   h += '<div class="sect">Ejercicios</div>';
 
   s.entries.forEach(function (e, i) {
     var prev = lastFor(e.name, s.id, s.date);
-    var filled = (e.sets || []).some(function (st) { return st.kg || st.reps; });
-    h += '<div class="ex' + (filled ? ' done' : '') + '" id="ex' + i + '">' +
+    var hasVals = (e.sets || []).some(function (st) { return st.kg || st.reps; });
+    var pend = e.pre && !e.touched;                 /* precargado, sin confirmar */
+    var conf = hasVals && !pend;                    /* confirmado de verdad */
+    h += '<div class="ex' + (conf ? ' done' : '') + (pend ? ' pend' : '') + '" id="ex' + i + '">' +
       '<div class="ex-h" onclick="toggleEx(' + i + ')">' + exThumb(e, true) +
-      '<div class="ex-b"><div class="ex-n">' + esc(e.name) + (filled ? '<span class="tick">✓</span>' : '') + '</div>' +
+      '<div class="ex-b"><div class="ex-n">' + esc(e.name) +
+      (conf ? '<span class="tick">✓</span>' : '') +
+      (pend ? '<span class="pill-pre">sin confirmar</span>' : '') + '</div>' +
       '<div class="ex-m">' + esc(e.target || '') +
-      (prev ? '<br><span style="color:var(--acc)">Anterior: ' + prev.e.sets.filter(function (x) { return x.kg || x.reps; }).map(function (x) { return (x.kg || '—') + '×' + (x.reps || '—'); }).join('  ') + '</span>' : '') +
+      (prev ? '<br><span style="color:var(--acc)">' + (pend ? 'Precargado del ' + fdate(prev.s.date) : 'Anterior: ' + prev.e.sets.filter(function (x) { return x.kg || x.reps; }).map(function (x) { return (x.kg || '—') + '×' + (x.reps || '—'); }).join('  ')) + '</span>' : '') +
       '</div></div><div class="ex-chev">▾</div></div>' +
       '<div class="ex-body">' +
       '<div class="setgrid"><div></div><div class="lbl">Peso kg</div><div class="lbl">Reps</div><div></div></div>';
@@ -781,13 +821,16 @@ function viewSession() {
       var ph = prev && prev.e.sets[j] ? (prev.e.sets[j].kg || '') : '';
       h += '<div class="setgrid setrow">' +
         '<div class="sn">' + (j + 1) + '</div>' +
-        '<input class="inp' + (ph ? ' prev' : '') + '" type="number" inputmode="decimal" step="0.5" min="0" placeholder="' + (ph || '—') + '" value="' + esc(st.kg) + '" oninput="setVal(' + i + ',' + j + ',\'kg\',this.value)">' +
-        '<input class="inp" type="number" inputmode="numeric" min="0" placeholder="' + (prev && prev.e.sets[j] ? (prev.e.sets[j].reps || '—') : '—') + '" value="' + esc(st.reps) + '" oninput="setVal(' + i + ',' + j + ',\'reps\',this.value)">' +
+        '<input class="inp' + (pend ? ' pre' : '') + '" type="number" inputmode="decimal" step="0.5" min="0" placeholder="' + (ph || '—') + '" value="' + esc(st.kg) + '" onfocus="this.select()" oninput="setVal(' + i + ',' + j + ',\'kg\',this.value)">' +
+        '<input class="inp' + (pend ? ' pre' : '') + '" type="number" inputmode="numeric" min="0" placeholder="' + (prev && prev.e.sets[j] ? (prev.e.sets[j].reps || '—') : '—') + '" value="' + esc(st.reps) + '" onfocus="this.select()" oninput="setVal(' + i + ',' + j + ',\'reps\',this.value)">' +
         (e.sets.length > 1 ? '<button class="mini" onclick="delSet(' + i + ',' + j + ')">−</button>' : '<div></div>') +
         '</div>';
     });
 
-    h += '<button class="btn btn-n sm" style="margin-top:8px" onclick="addSet(' + i + ')">＋ Añadir serie</button>' +
+    h += (pend
+      ? '<button class="btn btn-ok sm" style="margin-top:8px" onclick="confirmEx(' + i + ')">✓ Mismo peso que la última vez</button><div style="height:7px"></div>'
+      : '') +
+      '<button class="btn btn-n sm" style="margin-top:' + (pend ? '0' : '8px') + '" onclick="addSet(' + i + ')">＋ Añadir serie</button>' +
       '<textarea class="ta" placeholder="Notas del ejercicio…" oninput="UI.sess.entries[' + i + '].note=this.value">' + esc(e.note || '') + '</textarea>' +
       '<div class="hint">Descanso sugerido: ' + (e.rest || 60) + ' s</div>' +
       '</div></div>';
@@ -802,10 +845,26 @@ function viewSession() {
 
 function toggleEx(i) { document.getElementById('ex' + i).classList.toggle('open'); }
 function setVal(i, j, k, v) {
-  UI.sess.entries[i].sets[j][k] = v; UI.dirty = true;
+  var e = UI.sess.entries[i];
+  e.sets[j][k] = v; e.touched = true; UI.dirty = true;
   var card = document.getElementById('ex' + i);
-  var filled = UI.sess.entries[i].sets.some(function (st) { return st.kg || st.reps; });
-  if (card) card.classList.toggle('done', filled);
+  if (card) {
+    card.classList.remove('pend');
+    card.classList.toggle('done', e.sets.some(function (st) { return st.kg || st.reps; }));
+    var p = card.querySelector('.pill-pre'); if (p) p.remove();
+    card.querySelectorAll('.inp.pre').forEach(function (x) { x.classList.remove('pre'); });
+  }
+}
+/* confirmar un ejercicio tal cual venía precargado */
+function confirmEx(i) {
+  UI.sess.entries[i].touched = true; UI.dirty = true;
+  reRenderKeepOpen();
+}
+/* confirmar toda la sesión de golpe */
+function confirmAll() {
+  UI.sess.entries.forEach(function (e) { if (e.pre) e.touched = true; });
+  UI.dirty = true; reRenderKeepOpen();
+  toast('Sesión confirmada con los pesos anteriores', 'ok');
 }
 function addSet(i) { UI.sess.entries[i].sets.push({ kg: '', reps: '' }); reRenderKeepOpen(); }
 function delSet(i, j) { UI.sess.entries[i].sets.splice(j, 1); reRenderKeepOpen(); }
@@ -823,6 +882,35 @@ function saveSession() {
   var s = UI.sess;
   if (!s.date) { toast('Falta la fecha', 'bad'); return; }
   if (!sessionFilled(s)) { toast('Apunta al menos un peso o repetición', 'bad'); return; }
+
+  /* si algo quedó precargado y sin confirmar, no lo damos por hecho a la ligera:
+     guardarlo sin más registraría un ejercicio que quizá no hiciste */
+  var pend = s.entries.filter(function (e) { return e.pre && !e.touched; });
+  if (pend.length && UI.isNew) {
+    openSheet('<div class="grab"></div><div class="sheet-h">' + pend.length + ' sin confirmar</div>' +
+      '<div class="sheet-s">Llevan los pesos de la última vez, pero no los has tocado</div>' +
+      '<div style="font-size:13px;color:var(--dim);line-height:1.6;margin-bottom:15px">' +
+      pend.map(function (e) { return '· ' + esc(e.name); }).join('<br>') + '</div>' +
+      '<button class="btn btn-ok" onclick="doSave(true)">Los hice igual — guardar con esos pesos</button>' +
+      '<div style="height:9px"></div>' +
+      '<button class="btn btn-n sm" onclick="doSave(false)">No los hice — dejarlos fuera</button>' +
+      '<div style="height:9px"></div>' +
+      '<button class="btn btn-n sm" onclick="closeSheet()">Volver a la sesión</button>');
+    return;
+  }
+  doSave(true);
+}
+
+function doSave(keepPend) {
+  var s = UI.sess;
+  closeSheet();
+  if (!keepPend) {
+    s.entries.forEach(function (e) {
+      if (e.pre && !e.touched) e.sets = e.sets.map(function () { return { kg: '', reps: '' }; });
+    });
+    if (!sessionFilled(s)) { toast('No queda nada que guardar', 'bad'); return; }
+  }
+  s.entries.forEach(function (e) { delete e.pre; delete e.touched; delete e.prevDate; });
   s.mt = now();
   var i = DB.sessions.findIndex(function (x) { return x.id === s.id; });
   if (i >= 0) DB.sessions[i] = s; else DB.sessions.push(s);
