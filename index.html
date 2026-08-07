@@ -12,6 +12,27 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>Gym</title>
+<script>
+/* Corrige el hueco de iOS midiendo el dispositivo en vez de suponer.
+   Si la ventana real es más corta que la pantalla física por un margen
+   compatible con una barra de estado (20-100px), esa diferencia se mueve
+   al padding superior. Funciona pase lo que pase con la config cacheada
+   del icono al instalarlo. */
+(function () {
+  function fix() {
+    try {
+      if (navigator.standalone !== true) { document.documentElement.style.setProperty('--topfix', '0px'); return; }
+      var diff = (window.screen && window.screen.height ? window.screen.height : window.innerHeight) - window.innerHeight;
+      var extra = (diff > 20 && diff < 100) ? diff : 0;
+      document.documentElement.style.setProperty('--topfix', extra + 'px');
+    } catch (e) { document.documentElement.style.setProperty('--topfix', '0px'); }
+  }
+  window.__fixTopOverlap = fix;
+  fix();
+  window.addEventListener('resize', fix);
+  window.addEventListener('orientationchange', function () { setTimeout(fix, 300); });
+})();
+</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 script,template{display:none!important}   /* que nunca cuenten como item flex */
@@ -21,6 +42,7 @@ script,template{display:none!important}   /* que nunca cuenten como item flex */
   --acc:#ff6a1f; --acc-soft:rgba(255,106,31,.13); --acc-mid:rgba(255,106,31,.28);
   --txt:#f2f2f5; --dim:#8a8a96; --dim2:#5c5c68;
   --ok:#3ddc84; --warn:#ffc53d; --bad:#ff5a5a;
+  --topfix:0px;
 }
 html{background:var(--bg);overflow-x:hidden;-webkit-text-size-adjust:100%}
 body{
@@ -53,7 +75,7 @@ button{background:none;border:none;cursor:pointer}
 /* El contenido tiene que empezar por debajo de la hora. Con viewport-fit=cover
    la vista se mete bajo la barra de estado, así que aquí SÍ hace falta el inset
    superior (el problema de la franja negra era abajo, no arriba). */
-#app{padding-top:calc(env(safe-area-inset-top, 0px) + 8px);overflow-x:hidden}
+#app{padding-top:calc(env(safe-area-inset-top, 0px) + var(--topfix, 0px) + 8px);overflow-x:hidden}
 .screen{display:none;animation:fade .18s ease}
 .screen.on{display:block}
 @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
@@ -413,6 +435,53 @@ function sessIcon(s) {
 function sessName(s) {
   var r = sessRoutine(s);
   return (r ? r.name : s.rname) || 'Rutina';
+}
+/* Nombre de un ejercicio dentro de una sesión: si la entrada quedó vinculada
+   (exid) a un ejercicio que sigue vivo en la rutina, usa su nombre ACTUAL.
+   Si no hay vínculo, se queda con el nombre que tenía cuando se guardó. */
+function liveExName(entry, rid) {
+  if (entry && entry.exid) {
+    var r = DB.routines.find(function (x) { return x.id === rid && !x.del; });
+    if (r) {
+      var ex = (r.ex || []).find(function (x) { return x.id === entry.exid; });
+      if (ex) return ex.name;
+    }
+  }
+  return entry ? entry.name : '';
+}
+/* clave estable para agrupar el mismo ejercicio entre sesiones aunque cambie
+   el nombre: el id si existe, si no el nombre tal cual se guardó */
+function exKey(entry) { return (entry && entry.exid) || ('n:' + (entry && entry.name)); }
+
+/* Nombres "huérfanos": los que aparecen en sesiones guardadas de esta rutina
+   pero ya no coinciden con ningún ejercicio actual y no tienen vínculo (exid).
+   Sirve para ofrecer "esto de antes es lo mismo que esto de ahora" de forma
+   explícita — nunca se adivina solo, porque adivinar mal falsearía datos. */
+function orphanExNames(rid) {
+  var vivos = {};
+  (liveRoutines().find(function (r) { return r.id === rid; })?.ex || []).forEach(function (ex) { vivos[ex.name] = 1; });
+  var cuentas = {};
+  DB.sessions.forEach(function (s) {
+    if (s.rid !== rid) return;
+    (s.entries || []).forEach(function (en) {
+      if (en.exid || vivos[en.name]) return;
+      cuentas[en.name] = (cuentas[en.name] || 0) + 1;
+    });
+  });
+  return Object.keys(cuentas).sort(function (a, b) { return cuentas[b] - cuentas[a]; })
+    .map(function (n) { return { name: n, count: cuentas[n] }; });
+}
+/* vincula manualmente: todo lo que en esta rutina se llamó "oldName" pasa a
+   compartir identidad con el ejercicio exId */
+function linkOldName(rid, oldName, exId) {
+  var n = 0;
+  DB.sessions.forEach(function (s) {
+    if (s.rid !== rid) return;
+    (s.entries || []).forEach(function (en) {
+      if (!en.exid && en.name === oldName) { en.exid = exId; n++; }
+    });
+  });
+  return n;
 }
 
 var MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -863,7 +932,7 @@ function viewSession() {
     var conf = hasVals && !pend;                    /* confirmado de verdad */
     h += '<div class="ex' + (conf ? ' done' : '') + (pend ? ' pend' : '') + '" id="ex' + i + '">' +
       '<div class="ex-h" onclick="toggleEx(' + i + ')">' + exThumb(e, true) +
-      '<div class="ex-b"><div class="ex-n">' + esc(e.name) +
+      '<div class="ex-b"><div class="ex-n">' + esc(liveExName(e, s.rid)) +
       (conf ? '<span class="tick">✓</span>' : '') +
       (pend ? '<span class="pill-pre">sin confirmar</span>' : '') + '</div>' +
       '<div class="ex-m">' + esc(e.target || '') +
@@ -1124,8 +1193,27 @@ function exSheetHTML(isNew) {
     '<div class="fld"><label>O un emoji del teclado</label>' +
     '<input class="emoji-in" id="exEmoji" placeholder="Toca y usa 🙂 del teclado" maxlength="8" ' +
     'value="' + (isEmoji(e.icon) ? esc(e.icon) : '') + '" oninput="onExEmoji(this.value)"></div>' +
+    linkOldHTML() +
     '<button class="btn btn-p" onclick="commitEx(UI.exIdx)">' + (isNew ? 'Añadir' : 'Guardar') + '</button>' +
     '<div style="height:9px"></div><button class="btn btn-n sm" onclick="closeSheet()">Cancelar</button>';
+}
+
+/* Si esta rutina tiene sesiones antiguas con nombres que ya no coinciden con
+   ningún ejercicio actual, se ofrece vincularlas EXPLÍCITAMENTE — nunca por
+   adivinanza — para que el historial y "mismo peso" las reconozcan. */
+function linkOldHTML() {
+  if (!UI.editRoutine || !UI.editRoutine.id) return '';
+  var huerfanos = orphanExNames(UI.editRoutine.id);
+  if (!huerfanos.length) return '';
+  var sel = UI.exDraft.linkOld || '';
+  return '<div class="fld"><label>¿Es este ejercicio uno que ya tenías guardado con otro nombre?</label>' +
+    '<select class="sel" id="exLinkOld" onchange="UI.exDraft.linkOld=this.value">' +
+    '<option value="">— No, es distinto —</option>' +
+    huerfanos.map(function (o) {
+      return '<option value="' + esc(o.name) + '"' + (sel === o.name ? ' selected' : '') + '>' +
+        esc(o.name) + ' (' + o.count + ' registro' + (o.count === 1 ? '' : 's') + ' antiguos)</option>';
+    }).join('') + '</select>' +
+    '<div class="hint" style="text-align:left;padding-top:5px">Si eliges uno, tu historial anterior se sumará a este ejercicio: mismo peso, misma gráfica de progreso.</div></div>';
 }
 
 function exPreviewHTML() {
@@ -1226,6 +1314,10 @@ function commitEx(i) {
   var e = UI.exDraft;
   if (!e.name.trim()) { toast('Ponle nombre al ejercicio', 'bad'); return; }
   if (i < 0) UI.editRoutine.ex.push(e); else UI.editRoutine.ex[i] = e;
+  if (UI.exDraft.linkOld) {
+    var n = linkOldName(UI.editRoutine.id, UI.exDraft.linkOld, e.id);
+    if (n) { commit(); toast('Vinculados ' + n + ' registro' + (n === 1 ? '' : 's') + ' antiguos', 'ok'); }
+  }
   closeSheet(); render();
 }
 function saveRoutine() {
@@ -1234,9 +1326,34 @@ function saveRoutine() {
   if (!r.ex.length) { toast('Añade al menos un ejercicio', 'bad'); return; }
   r.mt = now();
   var i = DB.routines.findIndex(function (x) { return x.id === r.id; });
-  if (i >= 0) DB.routines[i] = r; else DB.routines.push(r);
+  if (i >= 0) {
+    linkRenamedExercises(DB.routines[i], r);
+    DB.routines[i] = r;
+  } else {
+    DB.routines.push(r);
+  }
   commit(); UI.editRoutine = null; UI.tab = 'train'; render(); scrollTop();
   toast('✓ Rutina guardada', 'ok');
+}
+
+/* Cuando renombras un ejercicio existente, todas las sesiones que lo tenían
+   guardado con el nombre ANTIGUO pasan a compartir identidad (exid) con el
+   nombre nuevo. Es seguro porque en este momento sabemos con certeza cuál
+   era el nombre viejo de cada id — no es una suposición por posición.
+   A partir de aquí, historial, progreso y "mismo peso" quedan vinculados. */
+function linkRenamedExercises(oldRoutine, newRoutine) {
+  var cambios = 0;
+  (newRoutine.ex || []).forEach(function (ex) {
+    var antes = (oldRoutine.ex || []).find(function (o) { return o.id === ex.id; });
+    if (!antes || antes.name === ex.name) return;
+    DB.sessions.forEach(function (s) {
+      if (s.rid !== newRoutine.id) return;
+      (s.entries || []).forEach(function (en) {
+        if (!en.exid && en.name === antes.name) { en.exid = ex.id; cambios++; }
+      });
+    });
+  });
+  if (cambios) toast('Vinculado el historial de ' + cambios + ' registro' + (cambios === 1 ? '' : 's') + ' antiguos', 'ok');
 }
 function delRoutine() {
   if (!confirm('¿Eliminar la rutina "' + UI.editRoutine.name + '"?\n\nLas sesiones ya guardadas se conservan.')) return;
@@ -1320,7 +1437,7 @@ function viewHist() {
         var k = parseFloat(st.kg);
         if (k > 0 && (best === null || k > best)) { best = k; bestReps = st.reps || ''; }
       });
-      h += '<div class="hrow"><span class="hn">' + esc(e.name) + '</span>' +
+      h += '<div class="hrow"><span class="hn">' + esc(liveExName(e, s.rid)) + '</span>' +
         '<span class="hv">' + best + ' kg' + (bestReps ? ' × ' + bestReps : '') + '</span>' +
         deltaHTML(best, prevTop(e.name, s, e.exid)) + '</div>';
     });
@@ -1586,22 +1703,30 @@ function viewProg() {
     lineChart(volPts, { gid: 1, unit: ' kg' }) + '</div>';
 
   /* --- progresión por ejercicio --- */
-  var names = {};
+  /* agrupar por identidad (exid si existe, si no por nombre) y mostrar
+     siempre el nombre ACTUAL de cada ejercicio, para que renombrar no
+     desdoble el historial en dos entradas distintas */
+  var grupos = {};
   asc.forEach(function (s) {
-    (s.entries || []).forEach(function (e) { if (topSet(e) > 0) names[e.name] = (names[e.name] || 0) + 1; });
+    (s.entries || []).forEach(function (e) {
+      if (topSet(e) <= 0) return;
+      var k = exKey(e);
+      if (!grupos[k]) grupos[k] = { label: liveExName(e, s.rid), count: 0 };
+      grupos[k].count++;
+    });
   });
-  var list = Object.keys(names).sort(function (a, b) { return names[b] - names[a]; });
+  var list = Object.keys(grupos).sort(function (a, b) { return grupos[b].count - grupos[a].count; });
   if (list.length) {
     if (!UI.progEx || list.indexOf(UI.progEx) < 0) UI.progEx = list[0];
     var pts = [];
     asc.forEach(function (s) {
-      var e = (s.entries || []).find(function (x) { return x.name === UI.progEx; });
+      var e = (s.entries || []).find(function (x) { return exKey(x) === UI.progEx; });
       if (e && topSet(e) > 0) pts.push({ x: s.date.slice(8) + '/' + s.date.slice(5, 7), y: topSet(e) });
     });
     var delta = pts.length > 1 ? pts[pts.length - 1].y - pts[0].y : 0;
     h += '<div class="sect">Por ejercicio</div>' +
       '<select class="sel" onchange="UI.progEx=this.value;render()">' +
-      list.map(function (n) { return '<option value="' + esc(n) + '"' + (n === UI.progEx ? ' selected' : '') + '>' + esc(n) + ' (' + names[n] + ')</option>'; }).join('') +
+      list.map(function (k) { return '<option value="' + esc(k) + '"' + (k === UI.progEx ? ' selected' : '') + '>' + esc(grupos[k].label) + ' (' + grupos[k].count + ')</option>'; }).join('') +
       '</select>' +
       '<div class="chartbox"><h3>Peso máximo por sesión</h3>' +
       '<div class="cs">' + (pts.length > 1
@@ -1686,7 +1811,7 @@ function viewSet() {
   h += '<div class="sect">Diagnóstico de pantalla</div>' +
     '<div class="card" style="padding:15px">' +
     '<div style="font-size:12.5px;color:var(--dim);line-height:1.6;margin-bottom:13px">' +
-    'Para averiguar por qué queda franja negra abajo. Haz captura de estos valores.</div>' +
+    'La app corrige sola el hueco midiendo tu pantalla. Aquí ves qué ha medido y cuánto ha compensado.</div>' +
     '<div id="diag" class="mono" style="font-size:12px;line-height:1.9;color:var(--txt);' +
     'background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px">midiendo…</div>' +
     '<div style="height:9px"></div>' +
@@ -1715,6 +1840,7 @@ function medirPantalla() {
     'Viewport visual': vv ? Math.round(vv.width) + ' × ' + Math.round(vv.height) : 'no disponible',
     'Inset abajo': Math.round(insetB) + ' px',
     'Diferencia': (window.screen ? (window.screen.height - window.innerHeight) : '?') + ' px',
+    'Compensación aplicada': getComputedStyle(document.documentElement).getPropertyValue('--topfix').trim() || '0px',
     'Píxel ratio': window.devicePixelRatio
   };
 }
@@ -1723,10 +1849,11 @@ function pintarDiag() {
   var m = medirPantalla();
   el.innerHTML = Object.keys(m).map(function (k) {
     var val = String(m[k]);
-    var ojo = (k === 'Inset abajo' && parseFloat(val) === 0) || (k === 'Diferencia' && parseFloat(val) > 2);
+    var ojo = (k === 'Inset abajo' && parseFloat(val) === 0);
+    var bien = (k === 'Compensación aplicada' && parseFloat(val) > 0);
     return '<div style="display:flex;justify-content:space-between;gap:10px">' +
       '<span style="color:var(--dim2)">' + k + '</span>' +
-      '<span style="' + (ojo ? 'color:var(--warn);font-weight:700' : '') + '">' + esc(val) + '</span></div>';
+      '<span style="' + (ojo ? 'color:var(--warn);font-weight:700' : bien ? 'color:var(--ok);font-weight:700' : '') + '">' + esc(val) + '</span></div>';
   }).join('');
 }
 function copiarDiag() {
