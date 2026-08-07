@@ -30,21 +30,26 @@ body{
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter",system-ui,sans-serif;
   -webkit-font-smoothing:antialiased; overscroll-behavior-y:none;
   font-size:15px; line-height:1.45;
-  /* fijado al viewport: en modo app de iOS, 100dvh no siempre coincide con la
-     pantalla real y dejaba un hueco negro bajo el menú */
-  position:fixed; top:0; right:0; bottom:0; left:0;
-  overflow:hidden;
+  /* el body se queda como bloque normal: fijarlo era un caso raro en Safari.
+     Quien se ancla al viewport son #app y nav, ambos position:fixed. */
+  height:100%; overflow:hidden; margin:0;
+  width:100%; max-width:100%;
+  touch-action:pan-y;            /* sin pellizco de zoom ni arrastre lateral */
 }
-input,select,textarea,button{font-family:inherit;font-size:16px;color:inherit}
+/* 16px es el mínimo: por debajo, iOS amplía la página al enfocar el campo
+   y luego se puede arrastrar de lado. Se fuerza en TODOS los campos. */
+input,select,textarea{font-family:inherit;font-size:16px!important;color:inherit;max-width:100%}
+button{font-family:inherit;font-size:16px;color:inherit}
+input[type=date]{min-width:0}
 button{background:none;border:none;cursor:pointer}
 .mono{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
 
 /* ---------- shell ---------- */
-#app{position:absolute;top:0;right:0;bottom:0;left:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+#app{position:fixed;top:0;right:0;bottom:0;left:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;
   padding-top:calc(var(--safe-t) + 4px);overscroll-behavior:contain;
   padding-left:var(--safe-l);padding-right:var(--safe-r);
   /* hueco para que la píldora no tape el final del contenido */
-  padding-bottom:104px}
+  padding-bottom:calc(104px + var(--vgap, 0px))}
 .screen{display:none;animation:fade .18s ease}
 .screen.on{display:block}
 @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
@@ -64,7 +69,8 @@ nav{position:fixed;left:50%;transform:translateX(-50%);
   /* offset fijo, SIN sumar la zona segura: el inset de iOS resuelve mucho
      mayor de lo esperado y dejaba la píldora flotando a media pantalla.
      La app de Japón la ancla igual y es la que queda bien. */
-  bottom:10px;
+  /* --vgap lo calcula fitViewport(): 0 salvo que iOS recorte el viewport */
+  bottom:calc(10px - var(--vgap, 0px));
   width:min(94vw,430px);
   z-index:90;
   background:rgba(26,26,32,.9);backdrop-filter:blur(22px) saturate(1.5);
@@ -135,7 +141,7 @@ nav button.on .ic{opacity:1;transform:translateY(-1px)}
 .hint{font-size:11px;color:var(--dim2);text-align:center;padding:2px 0 0}
 
 .ta{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 11px;
-  font-size:14px;resize:none;min-height:44px;margin-top:9px}
+  font-size:16px;resize:none;min-height:46px;margin-top:9px}
 .ta:focus{outline:none;border-color:var(--acc)}
 .ta::placeholder{color:var(--dim2)}
 
@@ -168,7 +174,7 @@ nav button.on .ic{opacity:1;transform:translateY(-1px)}
 svg{display:block;width:100%;overflow:visible}
 
 select.sel{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;
-  padding:10px 12px;font-size:14px;font-weight:600;margin-bottom:13px;appearance:none;
+  padding:10px 12px;font-size:16px;font-weight:600;margin-bottom:13px;appearance:none;
   background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%238a8a96' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>");
   background-repeat:no-repeat;background-position:right 12px center}
 select.sel:focus{outline:none;border-color:var(--acc)}
@@ -228,7 +234,7 @@ select.sel:focus{outline:none;border-color:var(--acc)}
 .fld label{display:block;font-size:11px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;
   color:var(--dim2);margin-bottom:6px}
 .fld input,.fld textarea,.fld select{width:100%;background:var(--bg);border:1px solid var(--line);
-  border-radius:11px;padding:11px 13px;font-size:15px;font-weight:600}
+  border-radius:11px;padding:11px 13px;font-size:16px;font-weight:600}
 .fld input:focus,.fld textarea:focus,.fld select:focus{outline:none;border-color:var(--acc)}
 .fld textarea{min-height:64px;resize:none;font-weight:500}
 .row2{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px}
@@ -1764,6 +1770,24 @@ function renderSyncPill() {
   if (busyEditing()) return;
   if (UI.tab === 'prog' || UI.tab === 'set') { try { render(); } catch (e) { } }
 }
+
+/* Red de seguridad para iOS instalado en pantalla de inicio: si el viewport no
+   llega al fondo físico (pasa cuando iOS guardó los metadatos de la app antes de
+   que existiera viewport-fit=cover), se compensa la diferencia para que la
+   píldora del menú no quede flotando a media pantalla. */
+function fitViewport() {
+  var gap = 0;
+  try {
+    if (navigator.standalone && window.screen && window.screen.height) {
+      var d = window.screen.height - window.innerHeight;
+      if (d > 2 && d < 140) gap = d;          /* franja plausible de zona segura */
+    }
+  } catch (e) { }
+  document.documentElement.style.setProperty('--vgap', gap + 'px');
+}
+fitViewport();
+window.addEventListener('resize', fitViewport);
+window.addEventListener('orientationchange', function () { setTimeout(fitViewport, 250); });
 
 /* arranque */
 loadLocal();
