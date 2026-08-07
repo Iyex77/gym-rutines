@@ -50,7 +50,10 @@ button{background:none;border:none;cursor:pointer}
 .mono{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
 
 /* ---------- shell ---------- */
-#app{padding-top:4px;overflow-x:hidden}
+/* El contenido tiene que empezar por debajo de la hora. Con viewport-fit=cover
+   la vista se mete bajo la barra de estado, así que aquí SÍ hace falta el inset
+   superior (el problema de la franja negra era abajo, no arriba). */
+#app{padding-top:calc(env(safe-area-inset-top, 0px) + 8px);overflow-x:hidden}
 .screen{display:none;animation:fade .18s ease}
 .screen.on{display:block}
 @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
@@ -671,7 +674,7 @@ function sessionFilled(s) { return (s.entries || []).some(function (e) { return 
 /* Busca la última vez que se hizo un ejercicio. Empareja primero por id del
    ejercicio y luego por nombre: así, si renombras un ejercicio, sigue
    arrastrando su historial en vez de empezar de cero. */
-function lastFor(exName, beforeId, beforeDate, exId) {
+function lastFor(exName, beforeId, beforeDate, exId, rid, pos) {
   var ss = liveSessions();   // ya viene ordenado de más reciente a más antiguo
   var lleno = function (e) { return e && (e.sets || []).some(function (st) { return st.kg || st.reps; }); };
   for (var i = 0; i < ss.length; i++) {
@@ -682,7 +685,22 @@ function lastFor(exName, beforeId, beforeDate, exId) {
     var e = null;
     if (exId) e = ents.find(function (x) { return x.exid === exId && lleno(x); });
     if (!e) e = ents.find(function (x) { return x.name === exName && lleno(x); });
+    /* Último recurso: misma rutina y misma posición en la lista. Cubre el caso
+       de haber renombrado o sustituido ejercicios: las sesiones viejas no
+       tienen forma de emparejarse y si no, la precarga no aparecería nunca. */
+    if (!e && rid && pos != null && ss[i].rid === rid && lleno(ents[pos])) {
+      e = ents[pos];
+    }
     if (e) return { s: ss[i], e: e };
+  }
+  return null;
+}
+/* ¿hay alguna sesión anterior de esta rutina de la que copiar? */
+function lastOfRoutine(rid, beforeId) {
+  var ss = liveSessions();
+  for (var i = 0; i < ss.length; i++) {
+    if (beforeId && ss[i].id === beforeId) continue;
+    if (ss[i].rid === rid && sessionFilled(ss[i])) return ss[i];
   }
   return null;
 }
@@ -780,10 +798,10 @@ function startSession(rid) {
   if (!r) return;
   UI.sess = {
     id: uid('s'), date: todayISO(), rid: r.id, rname: r.name, ricon: r.icon || 'dumbbell', rcolor: r.color || 'orange', mt: now(),
-    entries: (r.ex || []).map(function (e) {
+    entries: (r.ex || []).map(function (e, idx) {
       /* se arrastran los pesos de la última vez: así solo hay que escribir
          si cambia algo. Quedan marcados como "sin confirmar" hasta que los toques. */
-      var prev = lastFor(e.name, null, todayISO(), e.id);
+      var prev = lastFor(e.name, null, todayISO(), e.id, r.id, idx);
       var prevSets = prev ? prev.e.sets.filter(function (x) { return x.kg || x.reps; }) : [];
       var n = Math.max(1, e.sets || 3, prevSets.length);
       var sets = [];
@@ -822,17 +840,24 @@ function viewSession() {
     '" onchange="UI.sess.date=this.value"></div>';
 
   var pendientes = s.entries.filter(function (e) { return e.pre && !e.touched; });
+  var ant = UI.isNew ? lastOfRoutine(s.rid, s.id) : null;
+
   if (pendientes.length) {
     h += '<div class="banner">Los pesos vienen puestos de tu última sesión. ' +
       '<b>Solo tienes que escribir donde cambie algo</b>; lo que toques queda confirmado. ' +
       'Quedan ' + pendientes.length + ' sin confirmar.</div>' +
-      '<button class="btn btn-ok sm" style="margin-bottom:16px" onclick="confirmAll()">✓ Todo igual que la última vez</button>';
+      '<button class="btn btn-ok" style="margin-bottom:16px" onclick="confirmAll()">✓ Todo igual que la última vez</button>';
+  } else if (ant) {
+    /* aunque no haya precarga automática (ejercicios nuevos o renombrados),
+       el botón para copiar la sesión anterior siempre está disponible */
+    h += '<button class="btn btn-ok" style="margin-bottom:16px" onclick="copiarAnterior()">' +
+      '↺ Copiar pesos del ' + fdate(ant.date) + '</button>';
   }
 
   h += '<div class="sect">Ejercicios</div>';
 
   s.entries.forEach(function (e, i) {
-    var prev = lastFor(e.name, s.id, s.date, e.exid);
+    var prev = lastFor(e.name, s.id, s.date, e.exid, s.rid, i);
     var hasVals = (e.sets || []).some(function (st) { return st.kg || st.reps; });
     var pend = e.pre && !e.touched;                 /* precargado, sin confirmar */
     var conf = hasVals && !pend;                    /* confirmado de verdad */
@@ -890,6 +915,36 @@ function confirmEx(i) {
   UI.sess.entries[i].touched = true; UI.dirty = true;
   reRenderKeepOpen();
 }
+/* Copia los pesos de la última sesión de esta rutina. Empareja por id, luego
+   por nombre y, si no, por posición: así funciona aunque hayas cambiado los
+   ejercicios de la rutina. */
+function copiarAnterior() {
+  var s = UI.sess;
+  var ant = lastOfRoutine(s.rid, s.id);
+  if (!ant) { toast('No hay ninguna sesión anterior de esta rutina', 'bad'); return; }
+  var n = 0;
+  s.entries.forEach(function (e, i) {
+    var ents = ant.entries || [], src = null;
+    var lleno = function (x) { return x && (x.sets || []).some(function (st) { return st.kg || st.reps; }); };
+    if (e.exid) src = ents.find(function (x) { return x.exid === e.exid && lleno(x); });
+    if (!src) src = ents.find(function (x) { return x.name === e.name && lleno(x); });
+    if (!src && lleno(ents[i])) src = ents[i];
+    if (!src) return;
+    var llenas = (src.sets || []).filter(function (x) { return x.kg || x.reps; });
+    if (!llenas.length) return;
+    var total = Math.max(e.sets.length, llenas.length);
+    var nuevas = [];
+    for (var k = 0; k < total; k++) {
+      var p = llenas[k] || llenas[llenas.length - 1];
+      nuevas.push({ kg: p.kg, reps: p.reps });
+    }
+    e.sets = nuevas; e.pre = true; e.touched = false; n++;
+  });
+  UI.dirty = true;
+  reRenderKeepOpen(); scrollTop();
+  toast(n ? 'Copiados ' + n + ' ejercicios · revisa y confirma' : 'No había nada que copiar', n ? 'ok' : 'bad');
+}
+
 /* confirmar toda la sesión de golpe */
 function confirmAll() {
   UI.sess.entries.forEach(function (e) { if (e.pre) e.touched = true; });
