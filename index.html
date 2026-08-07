@@ -743,7 +743,7 @@ function sessionFilled(s) { return (s.entries || []).some(function (e) { return 
 /* Busca la última vez que se hizo un ejercicio. Empareja primero por id del
    ejercicio y luego por nombre: así, si renombras un ejercicio, sigue
    arrastrando su historial en vez de empezar de cero. */
-function lastFor(exName, beforeId, beforeDate, exId, rid, pos) {
+function lastFor(exName, beforeId, beforeDate, exId) {
   var ss = liveSessions();   // ya viene ordenado de más reciente a más antiguo
   var lleno = function (e) { return e && (e.sets || []).some(function (st) { return st.kg || st.reps; }); };
   for (var i = 0; i < ss.length; i++) {
@@ -754,12 +754,10 @@ function lastFor(exName, beforeId, beforeDate, exId, rid, pos) {
     var e = null;
     if (exId) e = ents.find(function (x) { return x.exid === exId && lleno(x); });
     if (!e) e = ents.find(function (x) { return x.name === exName && lleno(x); });
-    /* Último recurso: misma rutina y misma posición en la lista. Cubre el caso
-       de haber renombrado o sustituido ejercicios: las sesiones viejas no
-       tienen forma de emparejarse y si no, la precarga no aparecería nunca. */
-    if (!e && rid && pos != null && ss[i].rid === rid && lleno(ents[pos])) {
-      e = ents[pos];
-    }
+    /* Sin respaldo por posición: insertar o reordenar ejercicios desplaza los
+       índices y produce emparejamientos falsos (un ejercicio nuevo hereda por
+       error los datos de otro). Sin exid ni nombre exacto, no hay precarga —
+       mejor pedir el dato de nuevo que precargar algo que no se hizo. */
     if (e) return { s: ss[i], e: e };
   }
   return null;
@@ -870,7 +868,7 @@ function startSession(rid) {
     entries: (r.ex || []).map(function (e, idx) {
       /* se arrastran los pesos de la última vez: así solo hay que escribir
          si cambia algo. Quedan marcados como "sin confirmar" hasta que los toques. */
-      var prev = lastFor(e.name, null, todayISO(), e.id, r.id, idx);
+      var prev = lastFor(e.name, null, todayISO(), e.id);
       var prevSets = prev ? prev.e.sets.filter(function (x) { return x.kg || x.reps; }) : [];
       var n = Math.max(1, e.sets || 3, prevSets.length);
       var sets = [];
@@ -926,7 +924,7 @@ function viewSession() {
   h += '<div class="sect">Ejercicios</div>';
 
   s.entries.forEach(function (e, i) {
-    var prev = lastFor(e.name, s.id, s.date, e.exid, s.rid, i);
+    var prev = lastFor(e.name, s.id, s.date, e.exid);
     var hasVals = (e.sets || []).some(function (st) { return st.kg || st.reps; });
     var pend = e.pre && !e.touched;                 /* precargado, sin confirmar */
     var conf = hasVals && !pend;                    /* confirmado de verdad */
@@ -997,7 +995,8 @@ function copiarAnterior() {
     var lleno = function (x) { return x && (x.sets || []).some(function (st) { return st.kg || st.reps; }); };
     if (e.exid) src = ents.find(function (x) { return x.exid === e.exid && lleno(x); });
     if (!src) src = ents.find(function (x) { return x.name === e.name && lleno(x); });
-    if (!src && lleno(ents[i])) src = ents[i];
+    /* sin respaldo por posición: si el orden cambió, más vale no copiar nada
+       para ese ejercicio que copiar el peso de otro por error */
     if (!src) return;
     var llenas = (src.sets || []).filter(function (x) { return x.kg || x.reps; });
     if (!llenas.length) return;
