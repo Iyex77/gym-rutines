@@ -44,7 +44,7 @@ button{background:none;border:none;cursor:pointer}
   padding-top:calc(var(--safe-t) + 4px);overscroll-behavior:contain;
   padding-left:var(--safe-l);padding-right:var(--safe-r);
   /* hueco para que la píldora no tape el final del contenido */
-  padding-bottom:calc(96px + var(--safe-b))}
+  padding-bottom:104px}
 .screen{display:none;animation:fade .18s ease}
 .screen.on{display:block}
 @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
@@ -61,14 +61,17 @@ button{background:none;border:none;cursor:pointer}
 /* píldora flotante, igual que en la app de Japón: al no llegar al borde,
    la zona segura del indicador de inicio nunca descuadra nada */
 nav{position:fixed;left:50%;transform:translateX(-50%);
-  bottom:calc(var(--safe-b) + 10px);
+  /* offset fijo, SIN sumar la zona segura: el inset de iOS resuelve mucho
+     mayor de lo esperado y dejaba la píldora flotando a media pantalla.
+     La app de Japón la ancla igual y es la que queda bien. */
+  bottom:10px;
   width:min(94vw,430px);
   z-index:90;
   background:rgba(26,26,32,.9);backdrop-filter:blur(22px) saturate(1.5);
   -webkit-backdrop-filter:blur(22px) saturate(1.5);
   border:1px solid var(--line2);border-radius:21px;
   box-shadow:0 10px 34px rgba(0,0,0,.5);
-  padding:8px 6px;
+  padding:9px 6px 11px;
   display:grid;grid-template-columns:repeat(4,1fr)}
 nav button{display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 0;
   color:var(--dim2);font-size:10.5px;font-weight:600;letter-spacing:.1px;transition:color .15s;
@@ -216,7 +219,7 @@ select.sel:focus{outline:none;border-color:var(--acc)}
 .sheet-bg{position:absolute;inset:0;background:rgba(0,0,0,.65);backdrop-filter:blur(3px);animation:fade .2s}
 .sheet-c{position:absolute;left:0;right:0;bottom:0;max-height:92vh;overflow-y:auto;
   background:var(--surface);border-radius:22px 22px 0 0;border-top:1px solid var(--line);
-  padding:8px 16px calc(24px + var(--safe-b));animation:up .26s cubic-bezier(.32,.72,0,1)}
+  padding:8px 16px max(24px, var(--safe-b));animation:up .26s cubic-bezier(.32,.72,0,1)}
 @keyframes up{from{transform:translateY(100%)}to{transform:none}}
 .grab{width:36px;height:4px;border-radius:2px;background:var(--line2);margin:6px auto 14px}
 .sheet-h{font-size:19px;font-weight:800;letter-spacing:-.4px;margin-bottom:4px}
@@ -382,11 +385,24 @@ var PALETTE = [
   { k: 'red', hex: '#ff5a5a', name: 'Rojo' }
 ];
 function colorHex(k) { var c = PALETTE.find(function (x) { return x.k === k; }); return c ? c.hex : PALETTE[0].hex; }
-/* color de una sesión: el que guardó al crearse; si no, el de su rutina */
+/* Aspecto de una sesión (color, icono, nombre).
+   Manda SIEMPRE la rutina viva: si cambias su color, se repinta también el
+   pasado — calendario, historial y leyenda. Lo guardado en la sesión solo
+   se usa como respaldo cuando la rutina ya no existe. */
+function sessRoutine(s) {
+  return DB.routines.find(function (x) { return x.id === s.rid && !x.del; }) || null;
+}
 function sessColor(s) {
-  if (s.rcolor) return colorHex(s.rcolor);
-  var r = DB.routines.find(function (x) { return x.id === s.rid; });
-  return colorHex(r && r.color);
+  var r = sessRoutine(s);
+  return colorHex(r ? r.color : s.rcolor);
+}
+function sessIcon(s) {
+  var r = sessRoutine(s);
+  return (r ? r.icon : s.ricon) || 'dumbbell';
+}
+function sessName(s) {
+  var r = sessRoutine(s);
+  return (r ? r.name : s.rname) || 'Rutina';
 }
 
 var MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -717,7 +733,7 @@ function viewTrain() {
 
   var recent = liveSessions().filter(sessionFilled)[0];
   if (recent) {
-    h += '<div class="banner">Última sesión: <b>' + esc(recent.rname) + '</b> el ' + fdate(recent.date) +
+    h += '<div class="banner">Última sesión: <b>' + esc(sessName(recent)) + '</b> el ' + fdate(recent.date) +
       ' · ' + volSession(recent).toLocaleString('es-ES') + ' kg de volumen</div>';
   } else {
     h += '<div class="banner">Elige una rutina para empezar. Los pesos de la sesión anterior aparecen como referencia en cada ejercicio.</div>';
@@ -784,7 +800,7 @@ function openSession(sid) {
 function viewSession() {
   var s = UI.sess; if (!s) { UI.tab = 'train'; return viewTrain(); }
   var h = '<div class="topbar"><div><h1 style="display:flex;align-items:center;gap:9px">' +
-    '<span style="color:' + sessColor(s) + ';display:flex">' + iconSVG(s.ricon || 'dumbbell', 24) + '</span>' + esc(s.rname) + '</h1>' +
+    '<span style="color:' + sessColor(s) + ';display:flex">' + iconSVG(sessIcon(s), 24) + '</span>' + esc(sessName(s)) + '</h1>' +
     '<div class="sub">' + (UI.isNew ? 'Sesión nueva' : 'Editando sesión guardada') + '</div></div>' +
     '<button class="icon-btn" onclick="leaveSession()">✕</button></div><div class="wrap">';
 
@@ -1219,7 +1235,7 @@ function viewHist() {
 
     h += '<button class="hs" style="border-left:3px solid ' + col + '" onclick="openSession(\'' + s.id + '\')">' +
       '<div class="hs-t"><div><div class="hs-d">' + fdate(s.date) + '</div>' +
-      '<div class="hs-r" style="color:' + col + '"><span style="display:flex">' + iconSVG(s.ricon || 'dumbbell', 14) + '</span>' + esc(s.rname) + '</div></div>' +
+      '<div class="hs-r" style="color:' + col + '"><span style="display:flex">' + iconSVG(sessIcon(s), 14) + '</span>' + esc(sessName(s)) + '</div></div>' +
       (mejoras || bajadas
         ? '<div class="hs-badge">' + (mejoras ? '<span class="hd up">▲ ' + mejoras + '</span>' : '') +
           (bajadas ? '<span class="hd down">▼ ' + bajadas + '</span>' : '') + '</div>'
@@ -1368,8 +1384,8 @@ function calendar(sessions) {
   var byDay = {};
   sessions.forEach(function (s) {
     var v = volSession(s), d = byDay[s.date];
-    if (!d) byDay[s.date] = { vol: v, top: v, color: sessColor(s), name: s.rname };
-    else { d.vol += v; if (v > d.top) { d.top = v; d.color = sessColor(s); d.name = s.rname; } }
+    if (!d) byDay[s.date] = { vol: v, top: v, color: sessColor(s), name: sessName(s) };
+    else { d.vol += v; if (v > d.top) { d.top = v; d.color = sessColor(s); d.name = sessName(s); } }
   });
   var maxV = 1;
   Object.keys(byDay).forEach(function (k) { if (byDay[k].vol > maxV) maxV = byDay[k].vol; });
@@ -1429,7 +1445,7 @@ function scrollCalEnd() {
 
 function heatLegend() {
   var used = {};
-  liveSessions().filter(sessionFilled).forEach(function (s) { used[s.rname] = sessColor(s); });
+  liveSessions().filter(sessionFilled).forEach(function (s) { used[sessName(s)] = sessColor(s); });
   var names = Object.keys(used);
   if (!names.length) return '';
   return '<div class="legend">' + names.map(function (n) {
