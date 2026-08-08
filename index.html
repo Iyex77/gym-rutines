@@ -59,6 +59,11 @@ script,template{display:none!important}   /* que nunca cuenten como item flex */
   --topfix:0px; --docmin:100vh;
 }
 html{background:var(--bg);overflow-x:hidden;-webkit-text-size-adjust:100%}
+/* el candado de scroll de la hoja modal va en <html>, no en <body>: en
+   modo estándar el elemento que de verdad controla el scroll del documento
+   es <html> (document.scrollingElement) — bloquear solo <body> no bloquea
+   nada de verdad, aunque lo parezca. */
+html.sheet-open{overflow-y:hidden}
 body{
   background:var(--bg); color:var(--txt);
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter",system-ui,sans-serif;
@@ -2396,11 +2401,11 @@ function resetAll() {
 function openSheet(html) {
   document.getElementById('sheetC').innerHTML = html;
   document.getElementById('sheet').classList.add('on');
-  document.body.style.overflow = 'hidden';
+  document.documentElement.classList.add('sheet-open');
 }
 function closeSheet() {
   document.getElementById('sheet').classList.remove('on');
-  document.body.style.overflow = '';
+  document.documentElement.classList.remove('sheet-open');
 }
 
 /* ============================================================
@@ -2430,7 +2435,7 @@ function render() {
   /* candado de scroll de fondo: si la hoja no está abierta, nunca debe
      quedar bloqueado. Se corrige aquí, en el único sitio por el que pasa
      cualquier acción, en vez de perseguir cada camino que cierra una hoja. */
-  if (!document.getElementById('sheet').classList.contains('on')) document.body.style.overflow = '';
+  document.documentElement.classList.toggle('sheet-open', document.getElementById('sheet').classList.contains('on'));
   if (UI.tab === 'prog' && typeof scrollCalEnd === 'function') setTimeout(scrollCalEnd, 0);
 }
 function renderNav() {
