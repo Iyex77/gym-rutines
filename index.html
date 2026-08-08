@@ -584,7 +584,6 @@ function dnum(iso) { var p = String(iso).split('-'); return Date.UTC(+p[0], +p[1
    La apiKey de web NO es un secreto (va siempre en el cliente); quien protege
    los datos son las reglas de Firestore + lo largo que sea el código de sala. */
 var DEFAULT_FBCFG = '{"apiKey":"AIzaSyAPOHyUaCx47_GzoQMSykmdlEPtRTgs7q0","authDomain":"gym-rutine-b94ab.firebaseapp.com","projectId":"gym-rutine-b94ab","storageBucket":"gym-rutine-b94ab.firebasestorage.app","messagingSenderId":"412740084136","appId":"1:412740084136:web:06624b90ddf30a6f52bd9d"}';
-var DEFAULT_ROOM = 'sergio-gym-66lmnrcm8pe63r';
 
 var DB = { routines: [], sessions: [] };
 var PH = [];   /* fotos subidas por el usuario: [{id, data, mt, del}] */
@@ -594,9 +593,9 @@ var UI = { tab: 'train', sess: null, editRoutine: null, dirty: false };
 function loadLocal() {
   try { var r = JSON.parse(localStorage.getItem(LS) || 'null'); if (r && r.routines) DB = r; } catch (e) { }
   try { var c = JSON.parse(localStorage.getItem(LSCFG) || 'null'); if (c) CFG = Object.assign(CFG, c); } catch (e) { }
-  /* primera vez en este dispositivo: usar la configuración incrustada */
+  /* config del proyecto Firebase incrustada (no es secreta); la sala,
+     que sí hace de contraseña, la tiene que introducir cada dispositivo */
   if (!CFG.fbcfg) CFG.fbcfg = DEFAULT_FBCFG;
-  if (!CFG.room && !CFG.roomCleared) CFG.room = DEFAULT_ROOM;
   if (!DB.routines || !DB.routines.length) DB.routines = defaultRoutines();
   if (!DB.sessions) DB.sessions = [];
   try { var ph = JSON.parse(localStorage.getItem(LSPH) || 'null'); if (Array.isArray(ph)) PH = ph; } catch (e) { }
@@ -2166,7 +2165,7 @@ function askJoin() {
 function doJoin(code) {
   code = String(code || '').trim().toLowerCase().replace(/\s+/g, '');
   if (code.length < 10) { toast('El código necesita 10 caracteres o más', 'bad'); return; }
-  CFG.room = code; CFG.roomCleared = false;
+  CFG.room = code;
   if (!CFG.fbcfg) CFG.fbcfg = DEFAULT_FBCFG;
   saveCfg();
   closeSheet();
@@ -2185,7 +2184,7 @@ function copyRoom() {
 }
 function clearSync() {
   if (!confirm('Los datos se quedan en este dispositivo y dejan de compartirse.\n\n¿Continuar?')) return;
-  fbDisconnect(); CFG.room = ''; CFG.roomCleared = true; saveCfg(); render(); toast('Desconectado');
+  fbDisconnect(); CFG.room = ''; saveCfg(); render(); toast('Desconectado');
 }
 
 function exportData() {
