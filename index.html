@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>Gym</title>
+<script>window.__BUILD = '2026-08-08-1235';</script>
 <script>
 /* Corrige el hueco de iOS midiendo el dispositivo en vez de suponer.
    Si la ventana real es más corta que la pantalla física por un margen
@@ -376,6 +377,7 @@ var ICONS = {
   medal: 'M8.2 3.5l3.8 6 3.8-6M12 10.5a5.2 5.2 0 1 1 0 10.4 5.2 5.2 0 0 1 0-10.4zM12 13.6l1 2 2.2.3-1.6 1.6.4 2.2-2-1-2 1 .4-2.2-1.6-1.6 2.2-.3z',
   stretch: 'M12 4.4a1.7 1.7 0 1 0 0-.01M12 6.8v6M12 12.8l-3.2 6.4M12 12.8l3.2 6.4M7.8 9h8.4',
   arm: 'M6 8.5h6.5a4.5 4.5 0 0 1 4.5 4.5v1.5M6 8.5V6M6 8.5v4a4 4 0 0 0 4 4h2M17 14.5a2.5 2.5 0 0 1-5 0',
+  swap: 'M6 8h12M15 5l3 3-3 3M18 16H6M9 13l-3 3 3 3',
   legs: 'M9 4v5.5l-1.2 5 1.2 5.5M15 4v5.5l1.2 5-1.2 5.5M8.4 9.5h7.2M7.8 20h2.8M13.4 20h2.8'
 };
 var ICONKEYS = Object.keys(ICONS);
@@ -499,6 +501,24 @@ function orphanExNames(rid) {
    compartir identidad con el ejercicio exId */
 /* Ejercicios de la rutina que NO tienen ningún registro emparejado todavía.
    Son los candidatos a vincular con un nombre antiguo. */
+/* Todos los ejercicios de todas las rutinas, sin duplicar por id — sirve
+   tanto para "usar el mismo que en otra rutina" como para cambiar un
+   ejercicio de sitio dentro de una sesión sin perder su historial. */
+function allExercisesFlat(excludeRid) {
+  var visto = {}, out = [];
+  liveRoutines().forEach(function (r) {
+    if (r.id === excludeRid) return;
+    (r.ex || []).forEach(function (ex) {
+      if (visto[ex.id]) return;
+      visto[ex.id] = 1;
+      out.push({ id: ex.id, name: ex.name, img: ex.img || '', icon: ex.icon || 'dumbbell',
+        sets: ex.sets || 3, reps: ex.reps || 12, rest: ex.rest || 60, note: ex.note || '',
+        routineName: r.name, routineColor: r.color });
+    });
+  });
+  return out;
+}
+
 function exercisesNeedingLink(rid) {
   var r = liveRoutines().find(function (x) { return x.id === rid; });
   if (!r) return [];
@@ -987,7 +1007,7 @@ function viewSession() {
       (pend ? '<span class="pill-pre">sin confirmar</span>' : '') + '</div>' +
       '<div class="ex-m">' + esc(e.target || '') +
       (prev ? '<br><span style="color:var(--acc)">' + (pend ? 'Precargado del ' + fdate(prev.s.date) : 'Anterior: ' + prev.e.sets.filter(function (x) { return x.kg || x.reps; }).map(function (x) { return (x.kg || '—') + '×' + (x.reps || '—'); }).join('  ')) + '</span>' : '') +
-      '</div></div><div class="ex-chev">▾</div></div>' +
+      '</div></div><button class="mini" style="flex:0 0 auto" onclick="event.stopPropagation();swapExercise(' + i + ')" title="Cambiar ejercicio de hoy">' + iconSVG('swap', 15) + '</button><div class="ex-chev">▾</div></div>' +
       '<div class="ex-body">' +
       '<div class="setgrid"><div></div><div class="lbl">Peso kg</div><div class="lbl">Reps</div><div></div></div>';
 
@@ -1139,6 +1159,81 @@ function deleteSession(sid) {
   commit(); UI.sess = null; UI.dirty = false; UI.tab = 'hist'; render(); toast('Sesión eliminada');
 }
 
+/* ============================================================
+   Cambiar un ejercicio SOLO para la sesión de hoy — la rutina
+   no se toca, es un sustituto puntual (máquina ocupada, etc.)
+   ============================================================ */
+function swapExercise(i) {
+  UI.swapIdx = i;
+  var actual = UI.sess.entries[i];
+  var otros = allExercisesFlat().filter(function (o) { return o.id !== actual.exid; });
+  var h = '<div class="grab"></div><div class="sheet-h">Cambiar ejercicio de hoy</div>' +
+    '<div class="sheet-s">Sustituye "' + esc(liveExName(actual, UI.sess.rid)) + '" solo en esta sesión. La rutina no cambia.</div>';
+
+  if (otros.length) {
+    h += '<div class="sect" style="margin-top:4px">De tus rutinas</div>';
+    otros.forEach(function (o) {
+      h += '<button class="ex" style="width:100%;text-align:left;cursor:pointer;padding:0;border:1px solid var(--line)" onclick="doSwap(\'' + o.id + '\')">' +
+        '<div class="ex-h">' + exThumb(o, false) +
+        '<div class="ex-b"><div class="ex-n">' + esc(o.name) + '</div>' +
+        '<div class="ex-m">De ' + esc(o.routineName) + '</div></div></div></button>';
+    });
+  }
+
+  h += '<div class="sect">Nuevo, solo por hoy</div>' +
+    '<div class="fld"><label>Nombre</label><input id="swapName" placeholder="Ej. Press inclinado"></div>' +
+    '<div class="fld"><label>Foto (opcional)</label><div class="picker scroll" id="swapPick">' + swapPickerHTML() + '</div></div>' +
+    '<button class="btn btn-g" onclick="doSwapAdhoc()">Usar este</button>' +
+    '<div style="height:9px"></div><button class="btn btn-n sm" onclick="closeSheet()">Cancelar</button>';
+  openSheet(h);
+}
+function swapPickerHTML() {
+  var sel = UI.swapImg || '';
+  var h = '';
+  Object.keys(IMGLIB).forEach(function (k) {
+    h += '<button class="pk' + (sel === k ? ' on' : '') + '" onclick="UI.swapImg=\'' + k + '\';document.getElementById(\'swapPick\').innerHTML=swapPickerHTML()"><img src="' + imgSrc(k) + '" alt=""></button>';
+  });
+  return h;
+}
+
+/* sustituir por un ejercicio ya existente: reconstruye la entrada igual que
+   al empezar sesión, con su propia precarga si tiene historial */
+function doSwap(exId) {
+  var src = allExercisesFlat().find(function (o) { return o.id === exId; });
+  if (!src) return;
+  var prev = lastFor(src.name, UI.sess.id, UI.sess.date, src.id);
+  var prevSets = prev ? prev.e.sets.filter(function (x) { return x.kg || x.reps; }) : [];
+  var n = Math.max(1, src.sets || 3, prevSets.length);
+  var sets = [];
+  for (var k = 0; k < n; k++) {
+    var p = prevSets[k] || prevSets[prevSets.length - 1];
+    sets.push(p ? { kg: p.kg, reps: p.reps } : { kg: '', reps: '' });
+  }
+  UI.sess.entries[UI.swapIdx] = {
+    name: src.name, exid: src.id, img: src.img, icon: src.icon, rest: src.rest, note: '',
+    sets: sets, pre: prevSets.length > 0, touched: false,
+    prevDate: prev ? prev.s.date : '',
+    target: (src.sets || 3) + '×' + (src.reps || 12) + (src.note ? ' · ' + src.note : '')
+  };
+  UI.dirty = true;
+  closeSheet(); reRenderKeepOpen();
+  toast('Ejercicio cambiado para hoy', 'ok');
+}
+/* ad-hoc: no está en ninguna rutina, sin historial — se guarda tal cual */
+function doSwapAdhoc() {
+  var name = (document.getElementById('swapName').value || '').trim();
+  if (!name) { toast('Ponle un nombre', 'bad'); return; }
+  UI.sess.entries[UI.swapIdx] = {
+    name: name, exid: '', img: UI.swapImg || '', icon: 'dumbbell', rest: 60, note: '',
+    sets: [{ kg: '', reps: '' }, { kg: '', reps: '' }, { kg: '', reps: '' }],
+    pre: false, touched: false, prevDate: '', target: '3×12'
+  };
+  UI.swapImg = '';
+  UI.dirty = true;
+  closeSheet(); reRenderKeepOpen();
+  toast('Añadido solo para hoy', 'ok');
+}
+
 </script>
 <script>
 /* ===== views2.js ===== */
@@ -1255,6 +1350,8 @@ function exSheetHTML(isNew) {
     '<input type="file" id="exfile" accept="image/*" style="display:none" onchange="onPhotoPick(this)">' +
     '<button class="btn btn-g sm" style="margin-top:10px" onclick="document.getElementById(\'exfile\').click()">Subir foto desde el móvil</button>' +
     '</div>' +
+    '<div class="fld"><label>¿Es el mismo ejercicio que ya tienes en otra rutina?</label>' +
+    reuseHTML() + '</div>' +
     '<div class="fld"><label>O elegir del catálogo</label><div class="picker scroll" id="exPick">' + exPickerHTML() + '</div></div>' +
     '<div class="fld"><label>O un icono</label><div class="picker scroll" id="exIcons">' + exIconsHTML() + '</div></div>' +
     '<div class="fld"><label>O un emoji del teclado</label>' +
@@ -1281,6 +1378,46 @@ function linkOldHTML() {
         esc(o.name) + ' (' + o.count + ' registro' + (o.count === 1 ? '' : 's') + ' antiguos)</option>';
     }).join('') + '</select>' +
     '<div class="hint" style="text-align:left;padding-top:5px">Si eliges uno, tu historial anterior se sumará a este ejercicio: mismo peso, misma gráfica de progreso.</div></div>';
+}
+
+/* Reutilizar un ejercicio de otra rutina: comparten identidad (id), así que
+   el historial y las comparativas funcionan aunque el nombre visible sea
+   distinto en cada rutina. Es la vía correcta para "la misma máquina en dos
+   rutinas" — más fiable que confiar en que el texto coincida al escribirlo. */
+function reuseHTML() {
+  var rid = UI.editRoutine && UI.editRoutine.id;
+  var otros = allExercisesFlat(rid);
+  if (!otros.length) return '<div class="hint" style="text-align:left;padding:2px 0">Aún no tienes ejercicios en otras rutinas.</div>';
+  var sel = UI.exDraft.reuseId || '';
+  var h = '<select class="sel" id="exReuse" onchange="onReuseEx(this.value)" style="margin-bottom:0">' +
+    '<option value="">— Es distinto, crear nuevo —</option>';
+  var porRutina = {};
+  otros.forEach(function (o) { (porRutina[o.routineName] = porRutina[o.routineName] || []).push(o); });
+  Object.keys(porRutina).forEach(function (rn) {
+    h += '<optgroup label="' + esc(rn) + '">';
+    porRutina[rn].forEach(function (o) {
+      h += '<option value="' + o.id + '"' + (sel === o.id ? ' selected' : '') + '>' + esc(o.name) + '</option>';
+    });
+    h += '</optgroup>';
+  });
+  h += '</select>';
+  if (sel) {
+    var src = otros.find(function (o) { return o.id === sel; });
+    if (src) h += '<div class="hint" style="text-align:left;padding-top:6px">Compartirá historial con "' + esc(src.name) + '" de ' + esc(src.routineName) + '. Puedes darle otro nombre o foto aquí sin romper el vínculo.</div>';
+  }
+  return h;
+}
+function onReuseEx(exId) {
+  syncDraftFields();
+  if (!exId) { UI.exDraft.reuseId = ''; refreshExSheet(); return; }
+  var src = allExercisesFlat(UI.editRoutine && UI.editRoutine.id).find(function (o) { return o.id === exId; });
+  if (!src) return;
+  UI.exDraft.reuseId = exId;
+  UI.exDraft.id = src.id;                 /* adopta el id: aquí está la magia */
+  UI.exDraft.name = src.name;
+  UI.exDraft.img = src.img;
+  UI.exDraft.icon = src.icon;
+  refreshExSheet();
 }
 
 function exPreviewHTML() {
@@ -1321,6 +1458,7 @@ function refreshExSheet() {
   var a = document.getElementById('exPrev'); if (a) a.innerHTML = exPreviewHTML();
   var b = document.getElementById('exPick'); if (b) b.innerHTML = exPickerHTML();
   var c = document.getElementById('exIcons'); if (c) c.innerHTML = exIconsHTML();
+  var r = document.getElementById('exReuse'); if (r) r.parentElement.outerHTML = '<div class="fld"><label>¿Es el mismo ejercicio que ya tienes en otra rutina?</label>' + reuseHTML() + '</div>';
 }
 
 function pickImg(k) { syncDraftFields(); UI.exDraft.img = k; refreshExSheet(); }
@@ -1380,6 +1518,7 @@ function commitEx(i) {
   syncDraftFields();
   var e = UI.exDraft;
   if (!e.name.trim()) { toast('Ponle nombre al ejercicio', 'bad'); return; }
+  delete e.reuseId;   /* solo era una marca de la interfaz, no se guarda */
   if (i < 0) UI.editRoutine.ex.push(e); else UI.editRoutine.ex[i] = e;
   if (UI.exDraft.linkOld) {
     var n = linkOldName(UI.editRoutine.id, UI.exDraft.linkOld, e.id);
@@ -1901,6 +2040,10 @@ function exp(t, d) {
 function viewSet() {
   var st = fbStatus();
   var h = '<div class="topbar"><div><h1>Ajustes</h1><div class="sub">Sincronización y datos</div></div></div><div class="wrap">';
+
+  h += '<div class="card" style="padding:12px 15px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center">' +
+    '<span style="font-size:12px;color:var(--dim2);font-weight:700">VERSIÓN INSTALADA</span>' +
+    '<span class="mono" style="font-size:13px;font-weight:800;color:var(--acc)">' + esc(window.__BUILD || '?') + '</span></div>';
 
   h += '<div class="sect">Sala compartida</div>';
 
