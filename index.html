@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>Gym</title>
-<script>window.__BUILD = '2026-08-08-1235';</script>
+<script>window.__BUILD = '2026-08-08-1643';</script>
 <script>
 /* Corrige el hueco de iOS midiendo el dispositivo en vez de suponer.
    Si la ventana real es más corta que la pantalla física por un margen
@@ -22,13 +22,20 @@
 (function () {
   function fix() {
     try {
+      /* --docmin y --topfix son arreglos SOLO para el icono instalado en iOS.
+         En navegador (móvil o escritorio) se dejan a 0/100vh — nunca deben
+         tocar el layout normal, ahí no hay ningún problema que compensar. */
+      if (navigator.standalone !== true) {
+        document.documentElement.style.setProperty('--topfix', '0px');
+        document.documentElement.style.setProperty('--docmin', '100vh');
+        return;
+      }
       var scrH = (window.screen && window.screen.height) ? window.screen.height : window.innerHeight;
       /* altura mínima del documento = pantalla física. Así TODAS las pestañas
          pueden desplazarse aunque tengan poco contenido. Cuando la página no
          es desplazable, iOS deja la ventana corta y el menú queda flotando;
          en cuanto puede desplazarse, la expande a pantalla completa. */
       document.documentElement.style.setProperty('--docmin', scrH + 'px');
-      if (navigator.standalone !== true) { document.documentElement.style.setProperty('--topfix', '0px'); return; }
       var diff = scrH - window.innerHeight;
       var extra = (diff > 20 && diff < 100) ? diff : 0;
       document.documentElement.style.setProperty('--topfix', extra + 'px');
@@ -168,6 +175,10 @@ nav button.on .ic{opacity:1;transform:translateY(-1px)}
 .ex-n{font-size:15px;font-weight:700;letter-spacing:-.2px;display:flex;align-items:center;gap:6px}
 .ex-n .tick{color:var(--ok);font-size:13px}
 .ex-m{font-size:12px;color:var(--dim);margin-top:2px;line-height:1.35}
+.swap-btn{display:flex;align-items:center;gap:5px;flex:0 0 auto;padding:6px 10px;
+  border-radius:9px;background:var(--card2);border:1px solid var(--line);color:var(--dim);
+  font-size:11.5px;font-weight:700}
+.swap-btn:active{background:var(--line);color:var(--txt)}
 .ex-chev{color:var(--dim2);font-size:13px;transition:transform .2s;flex:0 0 auto;padding:0 2px}
 .ex.open .ex-chev{transform:rotate(180deg)}
 .ex-body{display:none;padding:2px 13px 13px;border-top:1px solid var(--line)}
@@ -519,20 +530,35 @@ function allExercisesFlat(excludeRid) {
   return out;
 }
 
+/* Todos los ejercicios de la rutina — el vinculador los ofrece todos y deja
+   que el usuario decida cuál necesita enlazarse. Un filtro automático es
+   engañoso aquí: cualquier sesión ya guardada de la propia rutina referencia
+   sus propios ejercicios por id, así que "¿tiene ya una coincidencia?"
+   siempre sale que sí aunque esa coincidencia sea solo consigo misma. */
 function exercisesNeedingLink(rid) {
   var r = liveRoutines().find(function (x) { return x.id === rid; });
-  if (!r) return [];
-  return (r.ex || []).filter(function (ex) {
-    var tiene = false;
-    DB.sessions.forEach(function (s) {
-      if (s.rid !== rid || tiene) return;
-      (s.entries || []).forEach(function (en) {
-        if (!(en.sets || []).some(function (st) { return st.kg || st.reps; })) return;
-        if (en.exid === ex.id || en.name === ex.name) tiene = true;
-      });
+  return r ? (r.ex || []).slice() : [];
+}
+
+/* Comparte identidad con un ejercicio de OTRA rutina: cambia el id de este
+   ejercicio por el del otro y re-vincula el historial propio de esta rutina
+   que apuntaba al id antiguo. A partir de aquí son literalmente el mismo
+   ejercicio en las dos rutinas. */
+function adoptSharedId(rid, exId, otherExId) {
+  var r = liveRoutines().find(function (x) { return x.id === rid; });
+  if (!r) return 0;
+  var ex = (r.ex || []).find(function (x) { return x.id === exId; });
+  if (!ex) return 0;
+  var oldId = ex.id;
+  ex.id = otherExId;
+  var n = 0;
+  DB.sessions.forEach(function (s) {
+    if (s.rid !== rid) return;
+    (s.entries || []).forEach(function (en) {
+      if (en.exid === oldId) { en.exid = otherExId; n++; }
     });
-    return !tiene;
   });
+  return n;
 }
 
 function linkOldName(rid, oldName, exId) {
@@ -977,13 +1003,16 @@ function viewSession() {
       'Quedan ' + pendientes.length + ' sin confirmar.</div>' +
       '<button class="btn btn-ok" style="margin-bottom:16px" onclick="confirmAll()">✓ Todo igual que la última vez</button>';
   } else if (ant) {
-    var sinVincular = (typeof orphanExNames === 'function') ? orphanExNames(s.rid) : [];
+    /* señal real de "sin vincular": entradas para las que la precarga no
+       encontró NADA en ninguna rutina — no "la rutina tiene ejercicios" */
+    var sinVincular = s.entries.filter(function (e) { return !e.pre; });
     if (sinVincular.length) {
-      /* la causa real de que no haya precarga: los registros antiguos están
-         guardados con otros nombres. Se ofrece arreglarlo, no un error seco. */
-      h += '<div class="banner">Tienes <b>' + sinVincular.length + ' ejercicios con registros antiguos</b> ' +
-        'guardados con otro nombre, por eso no se precargan los pesos. Vincúlalos una vez y el seguimiento continúa.</div>' +
-        '<button class="btn btn-p" style="margin-bottom:10px" onclick="abrirVinculador(\'' + s.rid + '\')">Vincular historial antiguo</button>' +
+      /* la causa real de que no haya precarga: hay ejercicios sin historial
+         vinculado, ya sea porque cambiaron de nombre o porque son el mismo
+         aparato de otra rutina. Se ofrece arreglarlo, no un error seco. */
+      h += '<div class="banner">Tienes <b>' + sinVincular.length + ' ejercicios sin historial vinculado</b> ' +
+        '(nombre distinto o mismo aparato en otra rutina). Vincúlalos una vez y el seguimiento continúa.</div>' +
+        '<button class="btn btn-p" style="margin-bottom:10px" onclick="abrirVinculador(\'' + s.rid + '\')">Vincular historial</button>' +
         '<div style="height:6px"></div>' +
         '<button class="btn btn-n sm" style="margin-bottom:16px" onclick="copiarAnterior()">' +
         'O copiar pesos del ' + fdate(ant.date) + '</button>';
@@ -1007,7 +1036,9 @@ function viewSession() {
       (pend ? '<span class="pill-pre">sin confirmar</span>' : '') + '</div>' +
       '<div class="ex-m">' + esc(e.target || '') +
       (prev ? '<br><span style="color:var(--acc)">' + (pend ? 'Precargado del ' + fdate(prev.s.date) : 'Anterior: ' + prev.e.sets.filter(function (x) { return x.kg || x.reps; }).map(function (x) { return (x.kg || '—') + '×' + (x.reps || '—'); }).join('  ')) + '</span>' : '') +
-      '</div></div><button class="mini" style="flex:0 0 auto" onclick="event.stopPropagation();swapExercise(' + i + ')" title="Cambiar ejercicio de hoy">' + iconSVG('swap', 15) + '</button><div class="ex-chev">▾</div></div>' +
+      '</div></div>' +
+      '<button class="swap-btn" onclick="event.stopPropagation();swapExercise(' + i + ')">' + iconSVG('swap', 14) + '<span>Cambiar</span></button>' +
+      '<div class="ex-chev">▾</div></div>' +
       '<div class="ex-body">' +
       '<div class="setgrid"><div></div><div class="lbl">Peso kg</div><div class="lbl">Reps</div><div></div></div>';
 
@@ -1081,10 +1112,9 @@ function copiarAnterior() {
     e.sets = nuevas; e.pre = true; e.touched = false; n++;
   });
   if (!n) {
-    /* no hay ni un solo emparejamiento: casi siempre es porque los registros
-       antiguos tienen otros nombres. Se ofrece la solución, no solo el error. */
-    var viejos = orphanExNames(s.rid);
-    if (viejos.length) { abrirVinculador(s.rid); return; }
+    /* no hay ni un solo emparejamiento: casi siempre es porque hay ejercicios
+       sin historial vinculado. Se ofrece la solución, no solo el error. */
+    if (exercisesNeedingLink(s.rid).length) { abrirVinculador(s.rid); return; }
     toast('No había nada que copiar', 'bad');
     return;
   }
@@ -1306,10 +1336,10 @@ function viewREdit() {
 
   h += '<div style="height:6px"></div><button class="btn btn-g sm" onclick="editEx(-1)">＋ Añadir ejercicio</button>';
 
-  /* si hay registros antiguos con nombres distintos, ofrecer vincularlos aquí también */
-  if (!UI.editNew && orphanExNames(r.id).length) {
+  /* ofrecer vincular si algún ejercicio de esta rutina no tiene historial propio ni compartido */
+  if (!UI.editNew && exercisesNeedingLink(r.id).length) {
     h += '<div style="height:8px"></div>' +
-      '<button class="btn btn-n sm" onclick="abrirVinculador(\'' + r.id + '\')">↔ Vincular historial de nombres antiguos</button>';
+      '<button class="btn btn-n sm" onclick="abrirVinculador(\'' + r.id + '\')">↔ Vincular con historial de antes o de otra rutina</button>';
   }
 
   h += 
@@ -1679,44 +1709,62 @@ function manualSession() {
    ============================================================ */
 function abrirVinculador(rid) {
   var faltan = exercisesNeedingLink(rid);
-  var viejos = orphanExNames(rid);
-  if (!viejos.length) {
+  if (!faltan.length) {
     openSheet('<div class="grab"></div><div class="sheet-h">Nada que vincular</div>' +
-      '<div class="sheet-s">No hay registros antiguos con nombres distintos a los actuales</div>' +
+      '<div class="sheet-s">Todos los ejercicios de esta rutina ya tienen historial propio o compartido</div>' +
       '<button class="btn btn-n" onclick="closeSheet()">Cerrar</button>');
     return;
   }
+  var viejos = orphanExNames(rid);
+  var otras = allExercisesFlat(rid);            /* ejercicios de las DEMÁS rutinas */
   UI.linkDraft = {};
   var h = '<div class="grab"></div><div class="sheet-h">Vincular historial</div>' +
-    '<div class="sheet-s">Tienes registros guardados con nombres antiguos. Empareja cada uno con su ejercicio actual y el seguimiento continuará.</div>';
+    '<div class="sheet-s">Empareja cada ejercicio con su historial anterior — el mismo nombre de antes, o el mismo aparato en otra rutina — y el seguimiento continúa junto.</div>';
+
+  var porRutina = {};
+  otras.forEach(function (o) { (porRutina[o.routineName] = porRutina[o.routineName] || []).push(o); });
 
   faltan.forEach(function (ex) {
     h += '<div class="fld"><label>' + esc(ex.name) + '</label>' +
-      '<select class="sel" onchange="UI.linkDraft[\'' + ex.id + '\']=this.value">' +
-      '<option value="">— Sin historial anterior —</option>' +
-      viejos.map(function (o) {
-        return '<option value="' + esc(o.name) + '">' + esc(o.name) + ' · ' + o.count + ' registro' + (o.count === 1 ? '' : 's') + '</option>';
-      }).join('') + '</select></div>';
+      '<select class="sel" onchange="onVinculoSel(\'' + ex.id + '\',this.value)">' +
+      '<option value="">— Es nuevo, sin historial —</option>';
+    if (viejos.length) {
+      h += '<optgroup label="Nombre antiguo de esta rutina">' +
+        viejos.map(function (o) {
+          return '<option value="old:' + esc(o.name) + '">' + esc(o.name) + ' · ' + o.count + ' registro' + (o.count === 1 ? '' : 's') + '</option>';
+        }).join('') + '</optgroup>';
+    }
+    Object.keys(porRutina).forEach(function (rn) {
+      h += '<optgroup label="Mismo aparato en ' + esc(rn) + '">' +
+        porRutina[rn].map(function (o) {
+          return '<option value="ex:' + o.id + '">' + esc(o.name) + '</option>';
+        }).join('') + '</optgroup>';
+    });
+    h += '</select></div>';
   });
-
-  if (!faltan.length) {
-    h += '<div style="font-size:13px;color:var(--dim);line-height:1.6;margin-bottom:15px">' +
-      'Todos tus ejercicios actuales ya tienen historial emparejado. Quedan estos nombres antiguos sin usar:<br><br>' +
-      viejos.map(function (o) { return '· ' + esc(o.name) + ' (' + o.count + ')'; }).join('<br>') + '</div>';
-  }
 
   h += '<button class="btn btn-p" onclick="aplicarVinculos(\'' + rid + '\')">Vincular</button>' +
     '<div style="height:9px"></div><button class="btn btn-n sm" onclick="closeSheet()">Cancelar</button>';
   openSheet(h);
 }
+function onVinculoSel(exId, val) { UI.linkDraft[exId] = val; }
 
 function aplicarVinculos(rid) {
-  var total = 0, usados = {};
+  var total = 0, usadosViejo = {}, usadosEx = {};
   Object.keys(UI.linkDraft || {}).forEach(function (exId) {
-    var viejo = UI.linkDraft[exId];
-    if (!viejo || usados[viejo]) return;      /* un nombre antiguo solo puede ir a un ejercicio */
-    usados[viejo] = 1;
-    total += linkOldName(rid, viejo, exId);
+    var val = UI.linkDraft[exId];
+    if (!val) return;
+    if (val.indexOf('old:') === 0) {
+      var nombre = val.slice(4);
+      if (usadosViejo[nombre]) return;        /* un nombre antiguo solo puede ir a un ejercicio */
+      usadosViejo[nombre] = 1;
+      total += linkOldName(rid, nombre, exId);
+    } else if (val.indexOf('ex:') === 0) {
+      var otroId = val.slice(3);
+      if (usadosEx[otroId]) return;           /* un ejercicio de otra rutina, un único destino */
+      usadosEx[otroId] = 1;
+      total += adoptSharedId(rid, exId, otroId) || 1;  /* aunque sin historial propio, la identidad ya queda compartida */
+    }
   });
   UI.linkDraft = {};
   closeSheet();
@@ -2080,59 +2128,8 @@ function viewSet() {
     '<div style="height:8px"></div><button class="btn btn-d sm" onclick="resetAll()">Borrar todo y empezar de cero</button>' +
     '</div>';
 
-  h += '<div class="sect">Diagnóstico de pantalla</div>' +
-    '<div class="card" style="padding:15px">' +
-    '<div style="font-size:12.5px;color:var(--dim);line-height:1.6;margin-bottom:13px">' +
-    'La app corrige sola el hueco midiendo tu pantalla. Aquí ves qué ha medido y cuánto ha compensado.</div>' +
-    '<div id="diag" class="mono" style="font-size:12px;line-height:1.9;color:var(--txt);' +
-    'background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px">midiendo…</div>' +
-    '<div style="height:9px"></div>' +
-    '<button class="btn btn-n sm" onclick="copiarDiag()">Copiar valores</button>' +
-    '</div>';
-
   h += '<div style="text-align:center;color:var(--dim2);font-size:11px;padding:22px 0 6px">Dispositivo ' + SELF_ID.slice(1, 7) + '</div></div>';
   return h;
-}
-
-/* Mide lo que hace de verdad este dispositivo. La clave es 'inset abajo':
-   si vale 0 en un iPhone con indicador de inicio, viewport-fit=cover NO está
-   activo → hay que borrar el icono de la pantalla de inicio y volver a añadirlo. */
-function medirPantalla() {
-  var probe = document.createElement('div');
-  probe.style.cssText = 'position:fixed;bottom:0;left:0;width:1px;height:env(safe-area-inset-bottom,0px);pointer-events:none;opacity:0';
-  document.body.appendChild(probe);
-  var insetB = probe.getBoundingClientRect().height;
-  probe.remove();
-
-  var vv = window.visualViewport;
-  return {
-    'Modo app': (navigator.standalone === true ? 'sí (icono)' : navigator.standalone === false ? 'no (Safari)' : 'desconocido'),
-    'Pantalla': (window.screen ? window.screen.width + ' × ' + window.screen.height : '?'),
-    'Ventana': window.innerWidth + ' × ' + window.innerHeight,
-    'Viewport visual': vv ? Math.round(vv.width) + ' × ' + Math.round(vv.height) : 'no disponible',
-    'Inset abajo': Math.round(insetB) + ' px',
-    'Diferencia': (window.screen ? (window.screen.height - window.innerHeight) : '?') + ' px',
-    'Compensación aplicada': getComputedStyle(document.documentElement).getPropertyValue('--topfix').trim() || '0px',
-    'Píxel ratio': window.devicePixelRatio
-  };
-}
-function pintarDiag() {
-  var el = document.getElementById('diag'); if (!el) return;
-  var m = medirPantalla();
-  el.innerHTML = Object.keys(m).map(function (k) {
-    var val = String(m[k]);
-    var ojo = (k === 'Inset abajo' && parseFloat(val) === 0);
-    var bien = (k === 'Compensación aplicada' && parseFloat(val) > 0);
-    return '<div style="display:flex;justify-content:space-between;gap:10px">' +
-      '<span style="color:var(--dim2)">' + k + '</span>' +
-      '<span style="' + (ojo ? 'color:var(--warn);font-weight:700' : bien ? 'color:var(--ok);font-weight:700' : '') + '">' + esc(val) + '</span></div>';
-  }).join('');
-}
-function copiarDiag() {
-  var m = medirPantalla();
-  var t = Object.keys(m).map(function (k) { return k + ': ' + m[k]; }).join('\n');
-  if (navigator.clipboard) navigator.clipboard.writeText(t).then(function () { toast('Copiado', 'ok'); }, function () { prompt('Copia esto:', t); });
-  else prompt('Copia esto:', t);
 }
 
 function randomRoom() {
@@ -2258,7 +2255,6 @@ function render() {
   document.getElementById('app').innerHTML = '<div class="screen on">' + body + '</div>';
   renderNav();
   if (UI.tab === 'prog' && typeof scrollCalEnd === 'function') setTimeout(scrollCalEnd, 0);
-  if (UI.tab === 'set' && typeof pintarDiag === 'function') setTimeout(pintarDiag, 0);
 }
 function renderNav() {
   var hide = (UI.tab === 'session' || UI.tab === 'redit');
