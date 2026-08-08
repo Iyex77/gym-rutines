@@ -932,7 +932,13 @@ function lastOfRoutine(rid, beforeId) {
    Rutinas por defecto + catálogo de imágenes
    ============================================================ */
 function defaultRoutines() {
-  var t = now();
+  /* mt:0 a propósito — son solo el andamiaje de un dispositivo nuevo, no una
+     edición real. Si mt fuera "ahora", un dispositivo recién estrenado que
+     se une a una sala existente GANARÍA la fusión frente a los datos reales
+     (más antiguos) solo por haber arrancado más tarde, y el nombre de la
+     rutina volvería al de fábrica en ese dispositivo. Con mt:0, cualquier
+     dato real (con cualquier fecha) siempre gana. */
+  var t = 0;
   return [
     {
       id: 'r_inf', name: 'Tren inferior', icon: 'legs', color: 'blue', mt: t, ex: [
@@ -1756,7 +1762,7 @@ function viewExercises() {
 
   all.forEach(function (o) {
     var uso = exUsage(o.id);
-    h += '<button class="ex" style="width:100%;text-align:left;cursor:pointer" onclick="editExGlobal(\'' + o.id + '\')">' +
+    h += '<button class="ex" style="width:100%;text-align:left;cursor:pointer" onclick="exDetailSheet(\'' + o.id + '\')">' +
       '<div class="ex-h">' + exThumb(o, false) +
       '<div class="ex-b"><div class="ex-n">' + esc(o.name) + '</div>' +
       '<div class="ex-m">' + (o.muscle ? esc(o.muscle) + ' · ' : '') + (uso.length ? 'Usado en ' + uso.map(esc).join(', ') : 'Sin asignar a ninguna rutina') + '</div></div>' +
@@ -1772,6 +1778,40 @@ function mergeExercisesConfirm(keepId, dropId) {
   mergeExercises(keepId, dropId);
   commit(); render();
   toast('✓ Ejercicios fusionados', 'ok');
+}
+
+/* Ficha del ejercicio: foto grande (toca para verla a pantalla completa,
+   como el lightbox que ya existe para las fotos), en qué rutinas está, y
+   acciones como botones — editar abre el formulario de siempre; eliminar
+   solo es posible si no está en ninguna rutina todavía (si ya está en uso,
+   quitarlo de una rutina concreta se hace desde el editor de esa rutina,
+   para no borrar por sorpresa algo con historial). */
+function exDetailSheet(exId) {
+  var o = allExercisesFlat().find(function (x) { return x.id === exId; });
+  if (!o) return;
+  var uso = exUsage(exId);
+  var src = imgSrc(o.img);
+  var h = '<div class="grab"></div>' +
+    (src
+      ? '<img src="' + src + '" style="width:100%;max-height:260px;object-fit:cover;border-radius:16px;background:#fff;cursor:zoom-in" onclick="lightbox(\'' + esc(o.img) + '\',\'' + esc(o.name).replace(/'/g, '&#39;') + '\')">'
+      : '<div class="ex-emo" style="width:100%;height:180px;border-radius:16px">' + iconSVG(o.icon || 'dumbbell', 44) + '</div>') +
+    '<div class="sheet-h" style="margin-top:14px">' + esc(o.name) + '</div>' +
+    (o.muscle ? '<div class="sheet-s">' + esc(o.muscle) + (o.note ? ' · ' + esc(o.note) : '') + '</div>' : (o.note ? '<div class="sheet-s">' + esc(o.note) + '</div>' : '')) +
+    '<div class="hint" style="text-align:left;padding:0 0 16px">' + (uso.length ? 'Usado en ' + uso.map(esc).join(', ') : 'Sin asignar a ninguna rutina') + '</div>' +
+    '<div class="row2" style="grid-template-columns:1fr 1fr">' +
+    '<button class="btn btn-n" onclick="editExGlobal(\'' + o.id + '\')">✏️ Editar</button>' +
+    (uso.length
+      ? '<button class="btn btn-d" disabled style="opacity:.4">Quítalo de su rutina</button>'
+      : '<button class="btn btn-d" onclick="deleteExerciseGlobal(\'' + o.id + '\')">Eliminar</button>') +
+    '</div>';
+  openSheet(h);
+}
+function deleteExerciseGlobal(exId) {
+  if (!confirm('¿Eliminar este ejercicio del catálogo?')) return;
+  var c = DB.exercises.find(function (x) { return x.id === exId; });
+  if (c) { c.del = true; c.mt = now(); }
+  commit(); closeSheet(); render();
+  toast('Ejercicio eliminado');
 }
 
 /* ============================================================
