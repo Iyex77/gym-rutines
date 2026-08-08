@@ -134,7 +134,7 @@ nav{position:fixed;left:50%;transform:translateX(-50%);
   border:1px solid var(--line2);border-radius:21px;
   box-shadow:0 10px 34px rgba(0,0,0,.5);
   padding:9px 6px 11px;
-  display:grid;grid-template-columns:repeat(4,1fr)}
+  display:grid;grid-template-columns:repeat(5,1fr)}
 nav button{display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 0;
   color:var(--dim2);font-size:10.5px;font-weight:600;letter-spacing:.1px;transition:color .15s;
   border-radius:13px}
@@ -454,6 +454,10 @@ var PALETTE = [
   { k: 'red', hex: '#ff5a5a', name: 'Rojo' }
 ];
 function colorHex(k) { var c = PALETTE.find(function (x) { return x.k === k; }); return c ? c.hex : PALETTE[0].hex; }
+
+/* grupo muscular del ejercicio — sirve para ofrecer un sustituto equivalente
+   si la máquina está ocupada. Lista fija y corta, opcional. */
+var MUSCLES = ['Piernas', 'Glúteos', 'Pecho', 'Espalda', 'Hombro', 'Bíceps', 'Tríceps', 'Abdomen', 'Gemelos', 'Cardio'];
 /* Aspecto de una sesión (color, icono, nombre).
    Manda SIEMPRE la rutina viva: si cambias su color, se repinta también el
    pasado — calendario, historial y leyenda. Lo guardado en la sesión solo
@@ -514,7 +518,9 @@ function orphanExNames(rid) {
    Son los candidatos a vincular con un nombre antiguo. */
 /* Todos los ejercicios de todas las rutinas, sin duplicar por id — sirve
    tanto para "usar el mismo que en otra rutina" como para cambiar un
-   ejercicio de sitio dentro de una sesión sin perder su historial. */
+   ejercicio de sitio dentro de una sesión sin perder su historial.
+   Incluye también los del catálogo (DB.exercises) que aún no están en
+   ninguna rutina: así reutilizar y sustituir ven la misma lista completa. */
 function allExercisesFlat(excludeRid) {
   var visto = {}, out = [];
   liveRoutines().forEach(function (r) {
@@ -523,9 +529,16 @@ function allExercisesFlat(excludeRid) {
       if (visto[ex.id]) return;
       visto[ex.id] = 1;
       out.push({ id: ex.id, name: ex.name, img: ex.img || '', icon: ex.icon || 'dumbbell',
-        sets: ex.sets || 3, reps: ex.reps || 12, rest: ex.rest || 60, note: ex.note || '',
+        muscle: ex.muscle || '', sets: ex.sets || 3, reps: ex.reps || 12, rest: ex.rest || 60, note: ex.note || '',
         routineName: r.name, routineColor: r.color });
     });
+  });
+  liveExercises().forEach(function (ex) {
+    if (visto[ex.id]) return;
+    visto[ex.id] = 1;
+    out.push({ id: ex.id, name: ex.name, img: ex.img || '', icon: ex.icon || 'dumbbell',
+      muscle: ex.muscle || '', sets: ex.sets || 3, reps: ex.reps || 12, rest: ex.rest || 60, note: ex.note || '',
+      routineName: 'Sin rutina', routineColor: '' });
   });
   return out;
 }
@@ -572,6 +585,49 @@ function linkOldName(rid, oldName, exId) {
   return n;
 }
 
+/* Un ejercicio puede tener copia propia en varias rutinas (mismo id, cada
+   una con sus series/reps/descanso). Al editar cualquiera de esas copias,
+   esto reparte nombre/imagen/icono/músculo a todas las demás y al catálogo
+   — así renombrar deja de romper el historial compartido, sin tener que
+   "vincular" nada de nuevo cada vez. Series/reps/descanso/nota NO se tocan:
+   sí son legítimamente distintos por rutina. */
+function propagateExerciseIdentity(exId, fields) {
+  DB.routines.forEach(function (r) {
+    if (r.del) return;
+    (r.ex || []).forEach(function (ex) {
+      if (ex.id !== exId) return;
+      ex.name = fields.name; ex.img = fields.img; ex.icon = fields.icon; ex.muscle = fields.muscle || '';
+      r.mt = now();
+    });
+  });
+  var c = DB.exercises.find(function (x) { return x.id === exId; });
+  if (c) { c.name = fields.name; c.img = fields.img; c.icon = fields.icon; c.muscle = fields.muscle || ''; c.mt = now(); }
+}
+
+/* Fusiona dos ejercicios que resultaron ser el mismo aparato con id distinto
+   (típico cuando se crearon por separado en dos rutinas en vez de reusar).
+   dropId desaparece: toda copia en rutinas y todo exid en sesiones pasa a
+   keepId, y se igualan nombre/imagen en las copias resultantes. */
+function mergeExercises(keepId, dropId) {
+  if (keepId === dropId) return;
+  // ponytail: coge el nombre/imagen de la primera copia que encuentre de keepId,
+  // sin preguntar cuál prefieres — renómbralo después si no es el que querías.
+  var canon = allExercisesFlat().find(function (x) { return x.id === keepId; });
+  DB.routines.forEach(function (r) {
+    if (r.del) return;
+    (r.ex || []).forEach(function (ex) {
+      if (ex.id === dropId) { ex.id = keepId; r.mt = now(); }
+    });
+  });
+  DB.sessions.forEach(function (s) {
+    (s.entries || []).forEach(function (en) {
+      if (en.exid === dropId) { en.exid = keepId; s.mt = now(); }
+    });
+  });
+  DB.exercises = DB.exercises.filter(function (x) { return x.id !== dropId; });
+  if (canon) propagateExerciseIdentity(keepId, canon);
+}
+
 var MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 var DIAS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 function fdate(iso) { var p = String(iso).split('-'); return +p[2] + ' ' + MES[+p[1] - 1] + ' ' + p[0]; }
@@ -585,7 +641,7 @@ function dnum(iso) { var p = String(iso).split('-'); return Date.UTC(+p[0], +p[1
    los datos son las reglas de Firestore + lo largo que sea el código de sala. */
 var DEFAULT_FBCFG = '{"apiKey":"AIzaSyAPOHyUaCx47_GzoQMSykmdlEPtRTgs7q0","authDomain":"gym-rutine-b94ab.firebaseapp.com","projectId":"gym-rutine-b94ab","storageBucket":"gym-rutine-b94ab.firebasestorage.app","messagingSenderId":"412740084136","appId":"1:412740084136:web:06624b90ddf30a6f52bd9d"}';
 
-var DB = { routines: [], sessions: [] };
+var DB = { routines: [], sessions: [], exercises: [] };
 var PH = [];   /* fotos subidas por el usuario: [{id, data, mt, del}] */
 var CFG = { fbcfg: '', room: '', autosync: true };
 var UI = { tab: 'train', sess: null, editRoutine: null, dirty: false };
@@ -598,6 +654,7 @@ function loadLocal() {
   if (!CFG.fbcfg) CFG.fbcfg = DEFAULT_FBCFG;
   if (!DB.routines || !DB.routines.length) DB.routines = defaultRoutines();
   if (!DB.sessions) DB.sessions = [];
+  if (!DB.exercises) DB.exercises = [];
   try { var ph = JSON.parse(localStorage.getItem(LSPH) || 'null'); if (Array.isArray(ph)) PH = ph; } catch (e) { }
   migrate();
   purge();
@@ -637,6 +694,7 @@ function purge() {
   var lim = now() - 90 * 864e5;
   DB.routines = DB.routines.filter(function (r) { return !(r.del && (r.mt || 0) < lim); });
   DB.sessions = DB.sessions.filter(function (s) { return !(s.del && (s.mt || 0) < lim); });
+  DB.exercises = DB.exercises.filter(function (x) { return !(x.del && (x.mt || 0) < lim); });
   PH = PH.filter(function (p) { return !(p.del && (p.mt || 0) < lim); });
   gcPhotos();
 }
@@ -646,6 +704,7 @@ function gcPhotos() {
   var used = {};
   DB.routines.forEach(function (r) { (r.ex || []).forEach(function (e) { if (e.img) used[e.img] = 1; }); });
   DB.sessions.forEach(function (s) { (s.entries || []).forEach(function (e) { if (e.img) used[e.img] = 1; }); });
+  DB.exercises.forEach(function (e) { if (e.img) used[e.img] = 1; });
   var grace = now() - 7 * 864e5;
   PH.forEach(function (p) {
     if (!p.del && !used['p:' + p.id] && (p.mt || 0) < grace) { p.del = true; p.data = ''; p.mt = now(); }
@@ -660,6 +719,7 @@ function commit(push) {
 
 var liveRoutines = function () { return DB.routines.filter(function (r) { return !r.del; }); };
 var liveSessions = function () { return DB.sessions.filter(function (s) { return !s.del; }).sort(function (a, b) { return b.date === a.date ? (b.mt || 0) - (a.mt || 0) : (b.date < a.date ? -1 : 1); }); };
+var liveExercises = function () { return DB.exercises.filter(function (x) { return !x.del; }); };
 
 /* ---------- fusión (dos dispositivos) ---------- */
 function mergeArr(local, remote) {
@@ -681,6 +741,7 @@ function mergeRemote(rem) {
   var before = JSON.stringify([DB.routines.length, DB.sessions.length]);
   DB.routines = mergeArr(DB.routines, rem.routines || []);
   DB.sessions = mergeArr(DB.sessions, rem.sessions || []);
+  DB.exercises = mergeArr(DB.exercises, rem.exercises || []);
   purge(); saveLocal();
   return true;
 }
@@ -787,7 +848,7 @@ function pushRemote(force) {
   FB.pending = setTimeout(function () {
     try {
       FB.db.collection('gymrooms').doc(CFG.room).set({
-        payload: JSON.stringify({ routines: DB.routines, sessions: DB.sessions }),
+        payload: JSON.stringify({ routines: DB.routines, sessions: DB.sessions, exercises: DB.exercises }),
         by: SELF_ID, ts: now()
       }).catch(function (e) { toast('No se pudo guardar en la nube', 'bad'); });
     } catch (e) { }
@@ -1195,18 +1256,28 @@ function deleteSession(sid) {
 function swapExercise(i) {
   UI.swapIdx = i;
   var actual = UI.sess.entries[i];
+  var actualEx = allExercisesFlat().find(function (o) { return o.id === actual.exid; });
+  var muscle = actualEx && actualEx.muscle;
   var otros = allExercisesFlat().filter(function (o) { return o.id !== actual.exid; });
   var h = '<div class="grab"></div><div class="sheet-h">Cambiar ejercicio de hoy</div>' +
     '<div class="sheet-s">Sustituye "' + esc(liveExName(actual, UI.sess.rid)) + '" solo en esta sesión. La rutina no cambia.</div>';
 
-  if (otros.length) {
-    h += '<div class="sect" style="margin-top:4px">De tus rutinas</div>';
-    otros.forEach(function (o) {
+  var pintaLista = function (lista) {
+    lista.forEach(function (o) {
       h += '<button class="ex" style="width:100%;text-align:left;cursor:pointer;padding:0;border:1px solid var(--line)" onclick="doSwap(\'' + o.id + '\')">' +
         '<div class="ex-h">' + exThumb(o, false) +
         '<div class="ex-b"><div class="ex-n">' + esc(o.name) + '</div>' +
         '<div class="ex-m">De ' + esc(o.routineName) + '</div></div></div></button>';
     });
+  };
+  if (muscle) {
+    var mismo = otros.filter(function (o) { return o.muscle === muscle; });
+    var resto = otros.filter(function (o) { return o.muscle !== muscle; });
+    if (mismo.length) { h += '<div class="sect" style="margin-top:4px">Mismo grupo muscular (' + muscle + ')</div>'; pintaLista(mismo); }
+    if (resto.length) { h += '<div class="sect">Otros ejercicios</div>'; pintaLista(resto); }
+  } else if (otros.length) {
+    h += '<div class="sect" style="margin-top:4px">De tus rutinas</div>';
+    pintaLista(otros);
   }
 
   h += '<div class="sect">Nuevo, solo por hoy</div>' +
@@ -1358,10 +1429,24 @@ function rmEx(i) { UI.editRoutine.ex.splice(i, 1); render(); }
 function editEx(i) {
   var isNew = i < 0;
   UI.exIdx = i;
+  UI.exGlobal = false;
   UI.exDraft = isNew
-    ? { id: uid('e'), name: '', img: '', icon: 'dumbbell', sets: 3, reps: 12, rest: 60, note: '' }
+    ? { id: uid('e'), name: '', img: '', icon: 'dumbbell', sets: 3, reps: 12, rest: 60, note: '', muscle: '' }
     : JSON.parse(JSON.stringify(UI.editRoutine.ex[i]));
   openSheet(exSheetHTML(isNew));
+}
+
+/* Editar/crear un ejercicio desde la pestaña Ejercicios, sin rutina de por
+   medio. Reusa el mismo formulario (exSheetHTML/commitEx); solo cambia dónde
+   se guarda al confirmar. */
+function editExGlobal(exId) {
+  UI.exIdx = -1;
+  UI.exGlobal = true;
+  var src = exId ? allExercisesFlat().find(function (x) { return x.id === exId; }) : null;
+  UI.exDraft = src
+    ? { id: src.id, name: src.name, img: src.img, icon: src.icon, sets: src.sets, reps: src.reps, rest: src.rest, note: src.note, muscle: src.muscle || '' }
+    : { id: uid('e'), name: '', img: '', icon: 'dumbbell', sets: 3, reps: 12, rest: 60, note: '', muscle: '' };
+  openSheet(exSheetHTML(!src));
 }
 
 function exSheetHTML(isNew) {
@@ -1370,6 +1455,10 @@ function exSheetHTML(isNew) {
     '<div class="sheet-s">Sube una foto de la máquina, elige una del catálogo o usa un icono</div>' +
     '<div class="fld"><label>Nombre</label><input id="exn" placeholder="Ej. Leg Press" value="' + esc(e.name) + '"></div>' +
     '<div class="fld"><label>Descripción corta</label><input id="exd" placeholder="Ej. Cuádriceps" value="' + esc(e.note || '') + '"></div>' +
+    '<div class="fld"><label>Grupo muscular</label><select class="sel" id="exmuscle" style="margin-bottom:0">' +
+    '<option value="">— Sin especificar —</option>' +
+    MUSCLES.map(function (m) { return '<option value="' + m + '"' + (e.muscle === m ? ' selected' : '') + '>' + m + '</option>'; }).join('') +
+    '</select><div class="hint" style="text-align:left;padding-top:5px">Sirve para ofrecerte un sustituto del mismo grupo si la máquina está ocupada.</div></div>' +
     '<div class="row2">' +
     '<div class="fld"><label>Series</label><input id="exs" type="number" inputmode="numeric" min="1" max="10" value="' + e.sets + '"></div>' +
     '<div class="fld"><label>Reps</label><input id="exr" type="number" inputmode="numeric" min="1" max="50" value="' + e.reps + '"></div>' +
@@ -1379,14 +1468,14 @@ function exSheetHTML(isNew) {
     '<input type="file" id="exfile" accept="image/*" style="display:none" onchange="onPhotoPick(this)">' +
     '<button class="btn btn-g sm" style="margin-top:10px" onclick="document.getElementById(\'exfile\').click()">Subir foto desde el móvil</button>' +
     '</div>' +
-    '<div class="fld"><label>¿Es el mismo ejercicio que ya tienes en otra rutina?</label>' +
-    reuseHTML() + '</div>' +
+    (UI.exGlobal ? '' : '<div class="fld"><label>¿Es el mismo ejercicio que ya tienes en otra rutina?</label>' +
+    reuseHTML() + '</div>') +
     '<div class="fld"><label>O elegir del catálogo</label><div class="picker scroll" id="exPick">' + exPickerHTML() + '</div></div>' +
     '<div class="fld"><label>O un icono</label><div class="picker scroll" id="exIcons">' + exIconsHTML() + '</div></div>' +
     '<div class="fld"><label>O un emoji del teclado</label>' +
     '<input class="emoji-in" id="exEmoji" placeholder="Toca y usa 🙂 del teclado" maxlength="8" ' +
     'value="' + (isEmoji(e.icon) ? esc(e.icon) : '') + '" oninput="onExEmoji(this.value)"></div>' +
-    linkOldHTML() +
+    (UI.exGlobal ? '' : linkOldHTML()) +
     '<button class="btn btn-p" onclick="commitEx(UI.exIdx)">' + (isNew ? 'Añadir' : 'Guardar') + '</button>' +
     '<div style="height:9px"></div><button class="btn btn-n sm" onclick="closeSheet()">Cancelar</button>';
 }
@@ -1502,6 +1591,7 @@ function syncDraftFields() {
   if ((v = g('exs')) !== null) UI.exDraft.sets = Math.min(10, Math.max(1, parseInt(v) || 3));
   if ((v = g('exr')) !== null) UI.exDraft.reps = Math.min(50, Math.max(1, parseInt(v) || 12));
   if ((v = g('exp')) !== null) UI.exDraft.rest = Math.min(300, Math.max(0, parseInt(v) || 60));
+  if ((v = g('exmuscle')) !== null) UI.exDraft.muscle = v;
 }
 
 /* Sube una foto: se reduce a 360 px y se guarda como JPEG.
@@ -1543,17 +1633,36 @@ function onPhotoPick(input) {
   rd.readAsDataURL(f);
 }
 
+/* Guarda el ejercicio en el catálogo (DB.exercises) y reparte su identidad
+   a cualquier copia que ya exista en alguna rutina — así CUALQUIER ejercicio
+   que crees o edites, esté donde esté, queda disponible para reutilizar y
+   se mantiene igual en todos los sitios donde se usa. */
+function upsertCatalog(e) {
+  var c = DB.exercises.find(function (x) { return x.id === e.id; });
+  var fields = { name: e.name, img: e.img, icon: e.icon, muscle: e.muscle || '' };
+  if (c) { Object.assign(c, fields); c.mt = now(); c.del = false; }
+  else DB.exercises.push(Object.assign({ id: e.id, mt: now() }, fields));
+  propagateExerciseIdentity(e.id, fields);
+}
+
 function commitEx(i) {
   syncDraftFields();
   var e = UI.exDraft;
   if (!e.name.trim()) { toast('Ponle nombre al ejercicio', 'bad'); return; }
   delete e.reuseId;   /* solo era una marca de la interfaz, no se guarda */
+  if (UI.exGlobal) {
+    upsertCatalog(e);
+    commit(); UI.exGlobal = false; closeSheet(); render();
+    toast('✓ Ejercicio guardado', 'ok');
+    return;
+  }
   if (i < 0) UI.editRoutine.ex.push(e); else UI.editRoutine.ex[i] = e;
+  upsertCatalog(e);
   if (UI.exDraft.linkOld) {
     var n = linkOldName(UI.editRoutine.id, UI.exDraft.linkOld, e.id);
-    if (n) { commit(); toast('Vinculados ' + n + ' registro' + (n === 1 ? '' : 's') + ' antiguos', 'ok'); }
+    if (n) toast('Vinculados ' + n + ' registro' + (n === 1 ? '' : 's') + ' antiguos', 'ok');
   }
-  closeSheet(); render();
+  commit(); closeSheet(); render();
 }
 function saveRoutine() {
   var r = UI.editRoutine;
@@ -1595,6 +1704,69 @@ function delRoutine() {
   var r = DB.routines.find(function (x) { return x.id === UI.editRoutine.id; });
   if (r) { r.del = true; r.mt = now(); }
   commit(); UI.editRoutine = null; UI.tab = 'train'; render(); toast('Rutina eliminada');
+}
+
+/* ============================================================
+   Pantalla: EJERCICIOS
+   Catálogo de todo lo que usas: reutilizable al montar una rutina nueva,
+   editable en un sitio y visible dónde se usa cada uno.
+   ============================================================ */
+/* nombre sin acentos/mayúsculas/espacios sueltos — solo para AGRUPAR
+   posibles duplicados a la vista; no toca el matching de historial en
+   ningún otro sitio (ese sigue siendo exacto, a propósito). */
+function normName(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+function exUsage(exId) {
+  return liveRoutines().filter(function (r) { return (r.ex || []).some(function (x) { return x.id === exId; }); }).map(function (r) { return r.name; });
+}
+function exDuplicateGroups() {
+  var byName = {};
+  allExercisesFlat().forEach(function (o) { (byName[normName(o.name)] = byName[normName(o.name)] || []).push(o); });
+  return Object.keys(byName).map(function (k) { return byName[k]; }).filter(function (g) { return g.length > 1; });
+}
+
+function viewExercises() {
+  var all = allExercisesFlat().sort(function (a, b) { return a.name.localeCompare(b.name, 'es'); });
+  var h = '<div class="topbar"><div><h1>Ejercicios</h1><div class="sub">' + all.length + ' en total</div></div>' +
+    '<button class="icon-btn" onclick="editExGlobal(null)" title="Nuevo ejercicio">＋</button></div><div class="wrap">';
+
+  var dups = exDuplicateGroups();
+  if (dups.length) {
+    h += '<div class="banner"><b>Posibles duplicados</b>: mismo nombre, ejercicios distintos — su historial no se compara entre sí hasta que los fusiones.</div>';
+    dups.forEach(function (g) {
+      h += '<div class="card" style="padding:12px;margin-bottom:10px">' +
+        '<div style="font-weight:700;margin-bottom:8px">' + esc(g[0].name) + '</div>';
+      g.forEach(function (o) {
+        h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
+          '<span style="flex:1;font-size:12.5px;color:var(--dim)">' + esc(o.routineName) + '</span>' +
+          (o.id === g[0].id ? '' : '<button class="btn btn-g sm" style="width:auto;padding:6px 12px" onclick="mergeExercisesConfirm(\'' + g[0].id + '\',\'' + o.id + '\')">Fusionar con "' + esc(g[0].routineName) + '"</button>') +
+          '</div>';
+      });
+      h += '</div>';
+    });
+  }
+
+  if (!all.length) h += '<div class="empty"><span class="big">🏋️</span>Aún no tienes ejercicios.<br>Se añaden solos al crearlos en una rutina, o pulsa ＋.</div>';
+
+  all.forEach(function (o) {
+    var uso = exUsage(o.id);
+    h += '<button class="ex" style="width:100%;text-align:left;cursor:pointer" onclick="editExGlobal(\'' + o.id + '\')">' +
+      '<div class="ex-h">' + exThumb(o, false) +
+      '<div class="ex-b"><div class="ex-n">' + esc(o.name) + '</div>' +
+      '<div class="ex-m">' + (o.muscle ? esc(o.muscle) + ' · ' : '') + (uso.length ? 'Usado en ' + uso.map(esc).join(', ') : 'Sin asignar a ninguna rutina') + '</div></div>' +
+      '<div class="ex-chev" style="transform:rotate(-90deg)">▾</div></div></button>';
+  });
+
+  h += '</div>';
+  return h;
+}
+
+function mergeExercisesConfirm(keepId, dropId) {
+  if (!confirm('Se fusionarán en uno solo: compartirán historial y comparativas a partir de ahora. ¿Continuar?')) return;
+  mergeExercises(keepId, dropId);
+  commit(); render();
+  toast('✓ Ejercicios fusionados', 'ok');
 }
 
 /* ============================================================
@@ -2214,7 +2386,7 @@ function importData(inp) {
 function resetAll() {
   if (!confirm('Se borrarán TODAS las rutinas y sesiones de este dispositivo.\n\n¿Seguro?')) return;
   if (!confirm('Última confirmación. Esto no se puede deshacer.')) return;
-  DB = { routines: defaultRoutines(), sessions: [] };
+  DB = { routines: defaultRoutines(), sessions: [], exercises: [] };
   commit(); render(); toast('Todo reiniciado');
 }
 
@@ -2238,6 +2410,7 @@ var TABS = [
   { k: 'train', ic: 'M7 7v10M4 9.2v5.6M17 7v10M20 9.2v5.6M7 12h10', l: 'Entrenar' },
   { k: 'prog', ic: 'M4 19.5V10M10 19.5V4.5M16 19.5v-6M21.5 19.5h-19', l: 'Progreso' },
   { k: 'hist', ic: 'M5 3.5h14v17l-7-3.5-7 3.5zM9 8h6M9 11.5h6', l: 'Historial' },
+  { k: 'exlib', ic: 'M3 10v4M6 7.5v9M18 7.5v9M21 10v4M6 12h12', l: 'Ejercicios' },
   { k: 'set', ic: 'M12 8.6a3.4 3.4 0 1 1 0 6.8 3.4 3.4 0 0 1 0-6.8zM12 2.5v3M12 18.5v3M4.2 7l2.6 1.5M17.2 15.5l2.6 1.5M4.2 17l2.6-1.5M17.2 8.5l2.6-1.5', l: 'Ajustes' }
 ];
 
@@ -2248,11 +2421,16 @@ function render() {
     case 'redit': body = viewREdit(); break;
     case 'prog': body = viewProg(); break;
     case 'hist': body = viewHist(); break;
+    case 'exlib': body = viewExercises(); break;
     case 'set': body = viewSet(); break;
     default: body = viewTrain();
   }
   document.getElementById('app').innerHTML = '<div class="screen on">' + body + '</div>';
   renderNav();
+  /* candado de scroll de fondo: si la hoja no está abierta, nunca debe
+     quedar bloqueado. Se corrige aquí, en el único sitio por el que pasa
+     cualquier acción, en vez de perseguir cada camino que cierra una hoja. */
+  if (!document.getElementById('sheet').classList.contains('on')) document.body.style.overflow = '';
   if (UI.tab === 'prog' && typeof scrollCalEnd === 'function') setTimeout(scrollCalEnd, 0);
 }
 function renderNav() {
