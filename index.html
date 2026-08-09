@@ -184,6 +184,11 @@ nav button.on .ic{opacity:1;transform:translateY(-1px)}
   background:var(--card2);border:1px solid var(--line);color:var(--dim)}
 .chip.on{background:var(--acc-soft);border-color:var(--acc-mid);color:var(--acc)}
 .chip.on2{background:rgba(61,220,132,.13);border-color:rgba(61,220,132,.4);color:var(--ok)}
+.mgroup{width:100%;display:flex;align-items:center;justify-content:space-between;
+  background:none;border:none;color:var(--txt);font-size:13px;font-weight:800;
+  text-transform:uppercase;letter-spacing:.02em;padding:14px 2px 8px;cursor:pointer}
+.mgroup-car{color:var(--dim2);transition:transform .15s;font-size:11px}
+.mgroup-car.open{transform:rotate(90deg)}
 .tabbar{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto}
 .tabbar button{flex:0 0 auto;font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:11px;
   background:var(--card2);border:1px solid var(--line);color:var(--dim);white-space:nowrap}
@@ -1590,10 +1595,11 @@ function muscleCounts(r) {
   return c;
 }
 function muscleCountsHTML(r) {
+  if (!(r.ex || []).length) return '';
   var c = muscleCounts(r);
   var keys = Object.keys(c).sort(function (a, b) { return c[b] - c[a]; });
-  if (!keys.length) return '';
-  return '<div class="chips" style="margin-bottom:10px">' +
+  if (!keys.length) return '<div class="hint" style="text-align:left;margin-bottom:10px">Añade un músculo principal a cada ejercicio para ver aquí cuántos trabajas de cada uno.</div>';
+  return '<div style="font-size:11.5px;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.02em;margin-bottom:6px">Músculos trabajados</div><div class="chips" style="margin-bottom:10px">' +
     keys.map(function (m) { return '<span class="chip" style="cursor:default">' + esc(m) + ' ×' + c[m] + '</span>'; }).join('') + '</div>';
 }
 function defaultImgTab(e) {
@@ -2069,18 +2075,6 @@ function viewExercises() {
   var h = '<div class="topbar"><div><h1>Ejercicios</h1><div class="sub">' + all.length + ' en total</div></div>' +
     '<button class="icon-btn" onclick="editExGlobal(null)" title="Nuevo ejercicio">＋</button></div><div class="wrap">';
 
-  var musclesUsed = {};
-  all.forEach(function (o) { if (o.muscle) musclesUsed[o.muscle] = 1; (o.muscles2 || []).forEach(function (m) { musclesUsed[m] = 1; }); });
-  var muscleList = Object.keys(musclesUsed).sort(function (a, b) { return a.localeCompare(b, 'es'); });
-  var filt = UI.exFilter || '';
-  if (muscleList.length) {
-    h += '<div class="chips" style="margin-bottom:12px">' +
-      '<button type="button" class="chip' + (filt ? '' : ' on') + '" onclick="setExFilter(\'\')">Todos</button>' +
-      muscleList.map(function (m) { return '<button type="button" class="chip' + (filt === m ? ' on' : '') + '" onclick="setExFilter(\'' + esc(m) + '\')">' + esc(m) + '</button>'; }).join('') +
-      '</div>';
-  }
-  if (filt) all = all.filter(function (o) { return o.muscle === filt || (o.muscles2 || []).indexOf(filt) >= 0; });
-
   var dups = exDuplicateGroups();
   if (dups.length) {
     h += '<div class="banner"><b>Posibles duplicados</b>: mismo nombre, ejercicios distintos — su historial no se compara entre sí hasta que los fusiones.</div>';
@@ -2097,27 +2091,45 @@ function viewExercises() {
     });
   }
 
-  if (!all.length) h += filt
-    ? '<div class="empty"><span class="big">🏋️</span>Ningún ejercicio de "' + esc(filt) + '".</div>'
-    : '<div class="empty"><span class="big">🏋️</span>Aún no tienes ejercicios.<br>Se añaden solos al crearlos en una rutina, o pulsa ＋.</div>';
+  if (!all.length) h += '<div class="empty"><span class="big">🏋️</span>Aún no tienes ejercicios.<br>Se añaden solos al crearlos en una rutina, o pulsa ＋.</div>';
 
-  all.forEach(function (o) {
-    var uso = exUsage(o.id);
-    h += '<div class="ex"><div class="ex-h" style="cursor:pointer" onclick="exDetailSheet(\'' + o.id + '\')">' + exThumb(o, true) +
-      '<div class="ex-b"><div class="ex-n">' + esc(o.name) + '</div>' +
-      '<div class="ex-m">' + (o.muscle ? esc(o.muscle) + ' · ' : '') + (uso.length ? 'Usado en ' + uso.map(esc).join(', ') : 'Sin asignar a ninguna rutina') + '</div></div>' +
-      '<button class="mini" title="Editar" onclick="event.stopPropagation();editExGlobal(\'' + o.id + '\')">✏️</button>' +
-      (uso.length
-        ? '<button class="mini" title="En uso — quítalo desde su rutina" disabled style="opacity:.3">✕</button>'
-        : '<button class="mini" title="Eliminar" onclick="event.stopPropagation();deleteExerciseGlobal(\'' + o.id + '\')">✕</button>') +
-      '</div></div>';
+  var groups = {};
+  all.forEach(function (o) { var g = o.muscle || 'Sin músculo'; (groups[g] = groups[g] || []).push(o); });
+  var groupNames = Object.keys(groups).sort(function (a, b) {
+    if (a === 'Sin músculo') return 1;
+    if (b === 'Sin músculo') return -1;
+    return a.localeCompare(b, 'es');
+  });
+  UI.exCollapsed = UI.exCollapsed || {};
+  groupNames.forEach(function (g) {
+    var list = groups[g];
+    var collapsed = !!UI.exCollapsed[g];
+    h += '<button type="button" class="mgroup" onclick="toggleExGroup(\'' + esc(g) + '\')">' +
+      '<span>' + esc(g) + ' <span style="color:var(--dim);font-weight:400">(' + list.length + ')</span></span>' +
+      '<span class="mgroup-car' + (collapsed ? '' : ' open') + '">▸</span></button>';
+    if (collapsed) return;
+    list.forEach(function (o) {
+      var uso = exUsage(o.id);
+      h += '<div class="ex"><div class="ex-h" style="cursor:pointer" onclick="exDetailSheet(\'' + o.id + '\')">' + exThumb(o, true) +
+        '<div class="ex-b"><div class="ex-n">' + esc(o.name) + '</div>' +
+        '<div class="ex-m">' + (uso.length ? 'Usado en ' + uso.map(esc).join(', ') : 'Sin asignar a ninguna rutina') + '</div></div>' +
+        '<button class="mini" title="Editar" onclick="event.stopPropagation();editExGlobal(\'' + o.id + '\')">✏️</button>' +
+        (uso.length
+          ? '<button class="mini" title="En uso — quítalo desde su rutina" disabled style="opacity:.3">✕</button>'
+          : '<button class="mini" title="Eliminar" onclick="event.stopPropagation();deleteExerciseGlobal(\'' + o.id + '\')">✕</button>') +
+        '</div></div>';
+    });
   });
 
   h += '</div>';
   return h;
 }
 
-function setExFilter(m) { UI.exFilter = m; render(); }
+function toggleExGroup(m) {
+  UI.exCollapsed = UI.exCollapsed || {};
+  UI.exCollapsed[m] = !UI.exCollapsed[m];
+  render();
+}
 function mergeExercisesConfirm(keepId, dropId) {
   if (!confirm('Se fusionarán en uno solo: compartirán historial y comparativas a partir de ahora. ¿Continuar?')) return;
   mergeExercises(keepId, dropId);
