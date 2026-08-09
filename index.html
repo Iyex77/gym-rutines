@@ -1525,6 +1525,16 @@ function exSheetHTML(isNew) {
 /* Músculo principal (uno) + secundarios (varios) como chips, en vez del
    select de antes — y un campo para escribir uno que no esté en la lista:
    en cuanto se usa una vez, ya sale como chip para la próxima. */
+/* un chip de músculo que no esté en la lista fija MUSCLES es "tuyo" — se
+   puede borrar de verdad (para arreglar una errata), no solo deseleccionar.
+   Los 10 de fábrica no llevan ese botón, no tiene sentido borrarlos. */
+function muscleChipHTML(m, onClass, onclickFn) {
+  var isCustom = MUSCLES.indexOf(m) < 0;
+  return '<span style="position:relative;display:inline-block">' +
+    '<button type="button" class="chip' + onClass + '" onclick="' + onclickFn + '(\'' + esc(m) + '\')">' + esc(m) + '</button>' +
+    (isCustom ? '<button type="button" title="Borrar este músculo de la lista" style="position:absolute;top:-6px;right:-6px;width:16px;height:16px;line-height:14px;font-size:9px;padding:0;background:var(--bad);color:#fff;border-radius:50%;border:2px solid var(--surface)" onclick="event.stopPropagation();purgeCustomMuscleConfirm(\'' + esc(m) + '\')">✕</button>' : '') +
+    '</span>';
+}
 function musclesChipsHTML() {
   var e = UI.exDraft, all = allMuscles();
   /* si acabas de escribir uno nuevo, aún no está guardado en ningún sitio
@@ -1533,22 +1543,22 @@ function musclesChipsHTML() {
   if (e.muscle && all.indexOf(e.muscle) < 0) all = all.concat([e.muscle]);
   (e.muscles2 || []).forEach(function (m) { if (all.indexOf(m) < 0) all.push(m); });
   var h = '<label>Músculo principal</label><div class="chips">' +
-    all.map(function (m) {
-      return '<button type="button" class="chip' + (e.muscle === m ? ' on' : '') + '" onclick="toggleMusclePrimary(\'' + esc(m) + '\')">' + esc(m) + '</button>';
-    }).join('') + '</div>' +
-    '<label style="margin-top:12px">Músculos secundarios</label><div class="chips">' +
-    all.filter(function (m) { return m !== e.muscle; }).map(function (m) {
-      return '<button type="button" class="chip' + ((e.muscles2 || []).indexOf(m) >= 0 ? ' on2' : '') + '" onclick="toggleMuscleSecondary(\'' + esc(m) + '\')">' + esc(m) + '</button>';
-    }).join('') + '</div>' +
-    '<div style="display:flex;gap:8px;margin-top:10px">' +
-    '<input id="exNewMuscle" placeholder="Añadir otro músculo…" style="flex:1;background:var(--bg);border:1px solid var(--line);border-radius:11px;padding:9px 12px;font-size:14px">' +
-    '<button type="button" class="btn btn-n sm" style="width:auto;padding:9px 16px" onclick="addCustomMuscle()">Añadir</button></div>';
+    all.map(function (m) { return muscleChipHTML(m, e.muscle === m ? ' on' : '', 'toggleMusclePrimary'); }).join('') + '</div>' +
+    '<div style="display:flex;gap:8px;margin-top:8px">' +
+    '<input id="exNewPrimary" placeholder="Añadir músculo principal…" style="flex:1;background:var(--bg);border:1px solid var(--line);border-radius:11px;padding:9px 12px;font-size:14px">' +
+    '<button type="button" class="btn btn-n sm" style="width:auto;padding:9px 16px" onclick="addCustomMuscle(\'primary\')">Añadir</button></div>' +
+    '<label style="margin-top:14px">Músculos secundarios</label><div class="chips">' +
+    all.filter(function (m) { return m !== e.muscle; }).map(function (m) { return muscleChipHTML(m, (e.muscles2 || []).indexOf(m) >= 0 ? ' on2' : '', 'toggleMuscleSecondary'); }).join('') + '</div>' +
+    '<div style="display:flex;gap:8px;margin-top:8px">' +
+    '<input id="exNewSecondary" placeholder="Añadir músculo secundario…" style="flex:1;background:var(--bg);border:1px solid var(--line);border-radius:11px;padding:9px 12px;font-size:14px">' +
+    '<button type="button" class="btn btn-n sm" style="width:auto;padding:9px 16px" onclick="addCustomMuscle(\'secondary\')">Añadir</button></div>';
   return h;
 }
 function toggleMusclePrimary(m) {
   syncDraftFields();
-  UI.exDraft.muscle = (UI.exDraft.muscle === m) ? '' : m;
-  UI.exDraft.muscles2 = (UI.exDraft.muscles2 || []).filter(function (x) { return x !== UI.exDraft.muscle; });
+  var activando = UI.exDraft.muscle !== m;
+  UI.exDraft.muscle = activando ? m : '';
+  if (activando) UI.exDraft.muscles2 = (UI.exDraft.muscles2 || []).filter(function (x) { return x !== m; });
   refreshMuscles();
 }
 function toggleMuscleSecondary(m) {
@@ -1558,13 +1568,43 @@ function toggleMuscleSecondary(m) {
   if (i >= 0) arr.splice(i, 1); else arr.push(m);
   refreshMuscles();
 }
-function addCustomMuscle() {
+function addCustomMuscle(which) {
   syncDraftFields();
-  var v = (document.getElementById('exNewMuscle').value || '').trim();
+  var inputId = which === 'secondary' ? 'exNewSecondary' : 'exNewPrimary';
+  var v = (document.getElementById(inputId).value || '').trim();
   if (!v) return;
-  if (!UI.exDraft.muscle) UI.exDraft.muscle = v;
-  else { var arr = UI.exDraft.muscles2 || (UI.exDraft.muscles2 = []); if (arr.indexOf(v) < 0) arr.push(v); }
+  if (which === 'secondary') {
+    var arr = UI.exDraft.muscles2 || (UI.exDraft.muscles2 = []);
+    if (arr.indexOf(v) < 0 && v !== UI.exDraft.muscle) arr.push(v);
+  } else {
+    UI.exDraft.muscle = v;
+    UI.exDraft.muscles2 = (UI.exDraft.muscles2 || []).filter(function (x) { return x !== v; });
+  }
   refreshMuscles();
+}
+/* borra un músculo escrito por error: lo quita del ejercicio que se está
+   editando Y de cualquier otro que ya lo tuviera guardado — si no, seguiría
+   saliendo en la lista para siempre aunque lo deseleccionaras aquí. */
+function purgeCustomMuscleConfirm(m) {
+  if (!confirm('¿Borrar "' + m + '" de la lista de músculos? Se quita de todos los ejercicios que lo tengan.')) return;
+  purgeCustomMuscle(m);
+  refreshMuscles();
+  toast('Músculo borrado', 'ok');
+}
+function purgeCustomMuscle(m) {
+  if (UI.exDraft.muscle === m) UI.exDraft.muscle = '';
+  UI.exDraft.muscles2 = (UI.exDraft.muscles2 || []).filter(function (x) { return x !== m; });
+  DB.routines.forEach(function (r) {
+    (r.ex || []).forEach(function (ex) {
+      if (ex.muscle === m) ex.muscle = '';
+      if (ex.muscles2 && ex.muscles2.indexOf(m) >= 0) ex.muscles2 = ex.muscles2.filter(function (x) { return x !== m; });
+    });
+  });
+  DB.exercises.forEach(function (ex) {
+    if (ex.muscle === m) ex.muscle = '';
+    if (ex.muscles2 && ex.muscles2.indexOf(m) >= 0) ex.muscles2 = ex.muscles2.filter(function (x) { return x !== m; });
+  });
+  commit();
 }
 function refreshMuscles() {
   var el = document.getElementById('exMuscles');
