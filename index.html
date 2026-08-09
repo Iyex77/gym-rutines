@@ -1527,6 +1527,11 @@ function exSheetHTML(isNew) {
    en cuanto se usa una vez, ya sale como chip para la próxima. */
 function musclesChipsHTML() {
   var e = UI.exDraft, all = allMuscles();
+  /* si acabas de escribir uno nuevo, aún no está guardado en ningún sitio
+     — allMuscles() no puede verlo todavía. Se añade aquí para que el chip
+     aparezca al instante, no solo después de guardar el ejercicio. */
+  if (e.muscle && all.indexOf(e.muscle) < 0) all = all.concat([e.muscle]);
+  (e.muscles2 || []).forEach(function (m) { if (all.indexOf(m) < 0) all.push(m); });
   var h = '<label>Músculo principal</label><div class="chips">' +
     all.map(function (m) {
       return '<button type="button" class="chip' + (e.muscle === m ? ' on' : '') + '" onclick="toggleMusclePrimary(\'' + esc(m) + '\')">' + esc(m) + '</button>';
