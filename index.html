@@ -177,6 +177,17 @@ nav button.on .ic{opacity:1;transform:translateY(-1px)}
 .ex.pend{border-style:dashed;border-color:var(--line2)}
 .pill-pre{font-size:9.5px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;
   background:var(--card2);color:var(--dim2);border-radius:5px;padding:2px 6px;flex:0 0 auto}
+
+/* chips: músculo principal/secundario, pestañas de fuente de imagen */
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+.chip{font-size:12.5px;font-weight:700;padding:7px 13px;border-radius:20px;
+  background:var(--card2);border:1px solid var(--line);color:var(--dim)}
+.chip.on{background:var(--acc-soft);border-color:var(--acc-mid);color:var(--acc)}
+.chip.on2{background:rgba(61,220,132,.13);border-color:rgba(61,220,132,.4);color:var(--ok)}
+.tabbar{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto}
+.tabbar button{flex:0 0 auto;font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:11px;
+  background:var(--card2);border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+.tabbar button.on{background:var(--acc-soft);border-color:var(--acc-mid);color:var(--acc)}
 .inp.pre{color:var(--dim);border-style:dashed}
 .ex-h{display:flex;align-items:center;gap:12px;padding:12px 13px}
 .ex-img{width:58px;height:58px;border-radius:12px;object-fit:cover;background:#fff;flex:0 0 auto}
@@ -420,9 +431,7 @@ function onExEmoji(v) {
   var t = String(v || '').trim();
   UI.exDraft.icon = t || 'dumbbell';
   if (t) UI.exDraft.img = '';
-  var pv = document.getElementById('exPrev'); if (pv) pv.innerHTML = exPreviewHTML();
-  var ic = document.getElementById('exIcons'); if (ic) ic.innerHTML = exIconsHTML();
-  var pk = document.getElementById('exPick'); if (pk) pk.innerHTML = exPickerHTML();
+  refreshExSheet();
 }
 function onRoutineEmoji(v) {
   var t = String(v || '').trim();
@@ -469,6 +478,20 @@ function colorHex(k) { var c = PALETTE.find(function (x) { return x.k === k; });
 /* grupo muscular del ejercicio — sirve para ofrecer un sustituto equivalente
    si la máquina está ocupada. Lista fija y corta, opcional. */
 var MUSCLES = ['Piernas', 'Glúteos', 'Pecho', 'Espalda', 'Hombro', 'Bíceps', 'Tríceps', 'Abdomen', 'Gemelos', 'Cardio'];
+/* la lista de músculos "conocidos" crece sola: cualquier nombre que se haya
+   escrito alguna vez (aunque no esté en MUSCLES) vuelve a aparecer como
+   chip para los siguientes ejercicios — así "añadir uno que no está" no
+   necesita guardarse en ningún sitio aparte, sale solo de lo que ya usas. */
+function allMuscles() {
+  var set = {};
+  MUSCLES.forEach(function (m) { set[m] = 1; });
+  var todos = DB.exercises.concat.apply(DB.exercises, DB.routines.map(function (r) { return r.ex || []; }));
+  todos.forEach(function (e) {
+    if (e.muscle) set[e.muscle] = 1;
+    (e.muscles2 || []).forEach(function (m) { set[m] = 1; });
+  });
+  return Object.keys(set);
+}
 /* Aspecto de una sesión (color, icono, nombre).
    Manda SIEMPRE la rutina viva: si cambias su color, se repinta también el
    pasado — calendario, historial y leyenda. Lo guardado en la sesión solo
@@ -540,7 +563,7 @@ function allExercisesFlat(excludeRid) {
       if (visto[ex.id]) return;
       visto[ex.id] = 1;
       out.push({ id: ex.id, name: ex.name, img: ex.img || '', icon: ex.icon || 'dumbbell',
-        muscle: ex.muscle || '', sets: ex.sets || 3, reps: ex.reps || 12, rest: ex.rest || 60, note: ex.note || '',
+        muscle: ex.muscle || '', muscles2: ex.muscles2 || [], sets: ex.sets || 3, reps: ex.reps || 12, rest: ex.rest || 60, note: ex.note || '',
         routineName: r.name, routineColor: r.color });
     });
   });
@@ -548,7 +571,7 @@ function allExercisesFlat(excludeRid) {
     if (visto[ex.id]) return;
     visto[ex.id] = 1;
     out.push({ id: ex.id, name: ex.name, img: ex.img || '', icon: ex.icon || 'dumbbell',
-      muscle: ex.muscle || '', sets: ex.sets || 3, reps: ex.reps || 12, rest: ex.rest || 60, note: ex.note || '',
+      muscle: ex.muscle || '', muscles2: ex.muscles2 || [], sets: ex.sets || 3, reps: ex.reps || 12, rest: ex.rest || 60, note: ex.note || '',
       routineName: 'Sin rutina', routineColor: '' });
   });
   return out;
@@ -607,12 +630,12 @@ function propagateExerciseIdentity(exId, fields) {
     if (r.del) return;
     (r.ex || []).forEach(function (ex) {
       if (ex.id !== exId) return;
-      ex.name = fields.name; ex.img = fields.img; ex.icon = fields.icon; ex.muscle = fields.muscle || '';
+      ex.name = fields.name; ex.img = fields.img; ex.icon = fields.icon; ex.muscle = fields.muscle || ''; ex.muscles2 = fields.muscles2 || [];
       r.mt = now();
     });
   });
   var c = DB.exercises.find(function (x) { return x.id === exId; });
-  if (c) { c.name = fields.name; c.img = fields.img; c.icon = fields.icon; c.muscle = fields.muscle || ''; c.mt = now(); }
+  if (c) { c.name = fields.name; c.img = fields.img; c.icon = fields.icon; c.muscle = fields.muscle || ''; c.muscles2 = fields.muscles2 || []; c.mt = now(); }
 }
 
 /* Fusiona dos ejercicios que resultaron ser el mismo aparato con id distinto
@@ -1275,6 +1298,7 @@ function swapExercise(i) {
   var actual = UI.sess.entries[i];
   var actualEx = allExercisesFlat().find(function (o) { return o.id === actual.exid; });
   var muscle = actualEx && actualEx.muscle;
+  var actualMuscles = actualEx ? [actualEx.muscle].concat(actualEx.muscles2 || []).filter(Boolean) : [];
   var otros = allExercisesFlat().filter(function (o) { return o.id !== actual.exid; });
   var h = '<div class="grab"></div><div class="sheet-h">Cambiar ejercicio de hoy</div>' +
     '<div class="sheet-s">Sustituye "' + esc(liveExName(actual, UI.sess.rid)) + '" solo en esta sesión. La rutina no cambia.</div>';
@@ -1287,9 +1311,13 @@ function swapExercise(i) {
         '<div class="ex-m">De ' + esc(o.routineName) + '</div></div></div></button>';
     });
   };
-  if (muscle) {
-    var mismo = otros.filter(function (o) { return o.muscle === muscle; });
-    var resto = otros.filter(function (o) { return o.muscle !== muscle; });
+  if (actualMuscles.length) {
+    var comparte = function (o) {
+      var om = [o.muscle].concat(o.muscles2 || []).filter(Boolean);
+      return om.some(function (m) { return actualMuscles.indexOf(m) >= 0; });
+    };
+    var mismo = otros.filter(comparte);
+    var resto = otros.filter(function (o) { return !comparte(o); });
     if (mismo.length) { h += '<div class="sect" style="margin-top:4px">Mismo grupo muscular (' + muscle + ')</div>'; pintaLista(mismo); }
     if (resto.length) { h += '<div class="sect">Otros ejercicios</div>'; pintaLista(resto); }
   } else if (otros.length) {
@@ -1448,9 +1476,17 @@ function editEx(i) {
   UI.exIdx = i;
   UI.exGlobal = false;
   UI.exDraft = isNew
-    ? { id: uid('e'), name: '', img: '', icon: 'dumbbell', sets: 3, reps: 12, rest: 60, note: '', muscle: '' }
+    ? { id: uid('e'), name: '', img: '', icon: 'dumbbell', sets: 3, reps: 12, rest: 60, note: '', muscle: '', muscles2: [] }
     : JSON.parse(JSON.stringify(UI.editRoutine.ex[i]));
+  if (!UI.exDraft.muscles2) UI.exDraft.muscles2 = [];
+  UI.exImgTab = defaultImgTab(UI.exDraft);
   openSheet(exSheetHTML(isNew));
+}
+function defaultImgTab(e) {
+  if (e.reuseId) return 'reusar';
+  if (e.img && e.img.slice(0, 2) === 'p:') return 'foto';
+  if (e.img && IMGLIB[e.img]) return 'catalogo';
+  return 'icono';
 }
 
 /* Editar/crear un ejercicio desde la pestaña Ejercicios, sin rutina de por
@@ -1461,40 +1497,107 @@ function editExGlobal(exId) {
   UI.exGlobal = true;
   var src = exId ? allExercisesFlat().find(function (x) { return x.id === exId; }) : null;
   UI.exDraft = src
-    ? { id: src.id, name: src.name, img: src.img, icon: src.icon, sets: src.sets, reps: src.reps, rest: src.rest, note: src.note, muscle: src.muscle || '' }
-    : { id: uid('e'), name: '', img: '', icon: 'dumbbell', sets: 3, reps: 12, rest: 60, note: '', muscle: '' };
+    ? { id: src.id, name: src.name, img: src.img, icon: src.icon, sets: src.sets, reps: src.reps, rest: src.rest, note: src.note, muscle: src.muscle || '', muscles2: (src.muscles2 || []).slice() }
+    : { id: uid('e'), name: '', img: '', icon: 'dumbbell', sets: 3, reps: 12, rest: 60, note: '', muscle: '', muscles2: [] };
+  UI.exImgTab = defaultImgTab(UI.exDraft);
   openSheet(exSheetHTML(!src));
 }
 
 function exSheetHTML(isNew) {
   var e = UI.exDraft;
   return '<div class="grab"></div><div class="sheet-h">' + (isNew ? 'Nuevo ejercicio' : 'Editar ejercicio') + '</div>' +
-    '<div class="sheet-s">Sube una foto de la máquina, elige una del catálogo o usa un icono</div>' +
+    '<div class="sheet-s">Nombre, músculo e imagen — series/reps/descanso abajo</div>' +
     '<div class="fld"><label>Nombre</label><input id="exn" placeholder="Ej. Leg Press" value="' + esc(e.name) + '"></div>' +
     '<div class="fld"><label>Descripción corta</label><input id="exd" placeholder="Ej. Cuádriceps" value="' + esc(e.note || '') + '"></div>' +
-    '<div class="fld"><label>Grupo muscular</label><select class="sel" id="exmuscle" style="margin-bottom:0">' +
-    '<option value="">— Sin especificar —</option>' +
-    MUSCLES.map(function (m) { return '<option value="' + m + '"' + (e.muscle === m ? ' selected' : '') + '>' + m + '</option>'; }).join('') +
-    '</select><div class="hint" style="text-align:left;padding-top:5px">Sirve para ofrecerte un sustituto del mismo grupo si la máquina está ocupada.</div></div>' +
+    '<div class="fld" id="exMuscles">' + musclesChipsHTML() + '</div>' +
     '<div class="row2">' +
     '<div class="fld"><label>Series</label><input id="exs" type="number" inputmode="numeric" min="1" max="10" value="' + e.sets + '"></div>' +
     '<div class="fld"><label>Reps</label><input id="exr" type="number" inputmode="numeric" min="1" max="50" value="' + e.reps + '"></div>' +
     '<div class="fld"><label>Descanso s</label><input id="exp" type="number" inputmode="numeric" min="0" max="300" step="15" value="' + e.rest + '"></div>' +
     '</div>' +
-    '<div class="fld"><label>Imagen</label><div id="exPrev">' + exPreviewHTML() + '</div>' +
-    '<input type="file" id="exfile" accept="image/*" style="display:none" onchange="onPhotoPick(this)">' +
-    '<button class="btn btn-g sm" style="margin-top:10px" onclick="document.getElementById(\'exfile\').click()">Subir foto desde el móvil</button>' +
-    '</div>' +
-    (UI.exGlobal ? '' : '<div class="fld"><label>¿Es el mismo ejercicio que ya tienes en otra rutina?</label>' +
-    reuseHTML() + '</div>') +
-    '<div class="fld"><label>O elegir del catálogo</label><div class="picker scroll" id="exPick">' + exPickerHTML() + '</div></div>' +
-    '<div class="fld"><label>O un icono</label><div class="picker scroll" id="exIcons">' + exIconsHTML() + '</div></div>' +
-    '<div class="fld"><label>O un emoji del teclado</label>' +
-    '<input class="emoji-in" id="exEmoji" placeholder="Toca y usa 🙂 del teclado" maxlength="8" ' +
-    'value="' + (isEmoji(e.icon) ? esc(e.icon) : '') + '" oninput="onExEmoji(this.value)"></div>' +
+    '<div class="fld"><label>Imagen</label><div id="exPrev">' + exPreviewHTML() + '</div></div>' +
+    '<div class="fld" id="exImgTab">' + imgTabHTML() + '</div>' +
     (UI.exGlobal ? '' : linkOldHTML()) +
     '<button class="btn btn-p" onclick="commitEx(UI.exIdx)">' + (isNew ? 'Añadir' : 'Guardar') + '</button>' +
     '<div style="height:9px"></div><button class="btn btn-n sm" onclick="closeSheet()">Cancelar</button>';
+}
+
+/* Músculo principal (uno) + secundarios (varios) como chips, en vez del
+   select de antes — y un campo para escribir uno que no esté en la lista:
+   en cuanto se usa una vez, ya sale como chip para la próxima. */
+function musclesChipsHTML() {
+  var e = UI.exDraft, all = allMuscles();
+  var h = '<label>Músculo principal</label><div class="chips">' +
+    all.map(function (m) {
+      return '<button type="button" class="chip' + (e.muscle === m ? ' on' : '') + '" onclick="toggleMusclePrimary(\'' + esc(m) + '\')">' + esc(m) + '</button>';
+    }).join('') + '</div>' +
+    '<label style="margin-top:12px">Músculos secundarios</label><div class="chips">' +
+    all.filter(function (m) { return m !== e.muscle; }).map(function (m) {
+      return '<button type="button" class="chip' + ((e.muscles2 || []).indexOf(m) >= 0 ? ' on2' : '') + '" onclick="toggleMuscleSecondary(\'' + esc(m) + '\')">' + esc(m) + '</button>';
+    }).join('') + '</div>' +
+    '<div style="display:flex;gap:8px;margin-top:10px">' +
+    '<input id="exNewMuscle" placeholder="Añadir otro músculo…" style="flex:1;background:var(--bg);border:1px solid var(--line);border-radius:11px;padding:9px 12px;font-size:14px">' +
+    '<button type="button" class="btn btn-n sm" style="width:auto;padding:9px 16px" onclick="addCustomMuscle()">Añadir</button></div>';
+  return h;
+}
+function toggleMusclePrimary(m) {
+  syncDraftFields();
+  UI.exDraft.muscle = (UI.exDraft.muscle === m) ? '' : m;
+  UI.exDraft.muscles2 = (UI.exDraft.muscles2 || []).filter(function (x) { return x !== UI.exDraft.muscle; });
+  refreshMuscles();
+}
+function toggleMuscleSecondary(m) {
+  syncDraftFields();
+  var arr = UI.exDraft.muscles2 || (UI.exDraft.muscles2 = []);
+  var i = arr.indexOf(m);
+  if (i >= 0) arr.splice(i, 1); else arr.push(m);
+  refreshMuscles();
+}
+function addCustomMuscle() {
+  syncDraftFields();
+  var v = (document.getElementById('exNewMuscle').value || '').trim();
+  if (!v) return;
+  if (!UI.exDraft.muscle) UI.exDraft.muscle = v;
+  else { var arr = UI.exDraft.muscles2 || (UI.exDraft.muscles2 = []); if (arr.indexOf(v) < 0) arr.push(v); }
+  refreshMuscles();
+}
+function refreshMuscles() {
+  var el = document.getElementById('exMuscles');
+  if (el) el.innerHTML = musclesChipsHTML();
+}
+
+/* Fuente de la imagen como pestañas: antes se veían las cuatro formas de
+   elegir imagen a la vez (foto/catálogo/icono/reusar), todas desplegadas —
+   liaba. Ahora solo se ve una a la vez. */
+function imgTabHTML() {
+  var tab = UI.exImgTab || 'icono';
+  var tabs = [['foto', '📷 Foto'], ['catalogo', '🗂 Catálogo'], ['icono', '⭐ Icono']];
+  if (!UI.exGlobal) tabs.push(['reusar', '↔ Reusar']);
+  var h = '<div class="tabbar">' + tabs.map(function (t) {
+    return '<button type="button" class="' + (tab === t[0] ? 'on' : '') + '" onclick="setImgTab(\'' + t[0] + '\')">' + t[1] + '</button>';
+  }).join('') + '</div>' +
+    '<div id="exImgTabBody">' + imgTabBodyHTML() + '</div>';
+  return h;
+}
+function imgTabBodyHTML() {
+  var tab = UI.exImgTab || 'icono';
+  if (tab === 'foto') {
+    return '<input type="file" id="exfile" accept="image/*" style="display:none" onchange="onPhotoPick(this)">' +
+      '<button class="btn btn-g sm" style="margin-bottom:10px" onclick="document.getElementById(\'exfile\').click()">Subir foto desde el móvil</button>' +
+      '<div class="picker scroll" id="exPick">' + exPickerHTML() + '</div>';
+  }
+  if (tab === 'catalogo') return '<div class="picker scroll" id="exCatalog">' + exCatalogHTML() + '</div>';
+  if (tab === 'reusar') return '<div id="exReuseWrap">' + reuseHTML() + '</div>';
+  return '<div class="picker scroll" id="exIcons">' + exIconsHTML() + '</div>' +
+    '<div class="fld" style="margin-top:10px"><label>O un emoji del teclado</label>' +
+    '<input class="emoji-in" id="exEmoji" placeholder="Toca y usa 🙂 del teclado" maxlength="8" ' +
+    'value="' + (isEmoji(UI.exDraft.icon) ? esc(UI.exDraft.icon) : '') + '" oninput="onExEmoji(this.value)"></div>';
+}
+function setImgTab(tab) {
+  syncDraftFields();
+  UI.exImgTab = tab;
+  var wrap = document.getElementById('exImgTab');
+  if (wrap) wrap.innerHTML = imgTabHTML();
 }
 
 /* Si esta rutina tiene sesiones antiguas con nombres que ya no coinciden con
@@ -1552,7 +1655,11 @@ function onReuseEx(exId) {
   UI.exDraft.name = src.name;
   UI.exDraft.img = src.img;
   UI.exDraft.icon = src.icon;
+  UI.exDraft.muscle = src.muscle || '';
+  UI.exDraft.muscles2 = (src.muscles2 || []).slice();
   refreshExSheet();
+  refreshMuscles();
+  var nameEl = document.getElementById('exn'); if (nameEl) nameEl.value = UI.exDraft.name;
 }
 
 function exPreviewHTML() {
@@ -1570,12 +1677,45 @@ function exPreviewHTML() {
     '<div style="flex:1;font-size:12px;color:var(--dim2);line-height:1.5">Sin foto — se usará el icono</div></div>';
 }
 
+/* fotos SUBIDAS por ti que están de verdad en uso ahora mismo en algún
+   ejercicio — sirve para no mostrar en el selector las que ya no usa nadie
+   (se van solas) y para saber cuáles se pueden borrar sin más. */
+function livePhotosInUse() {
+  var used = {};
+  DB.routines.forEach(function (r) { (r.ex || []).forEach(function (e) { if (e.img && e.img.slice(0, 2) === 'p:') used[e.img.slice(2)] = 1; }); });
+  DB.exercises.forEach(function (e) { if (e.img && e.img.slice(0, 2) === 'p:') used[e.img.slice(2)] = 1; });
+  return used;
+}
 function exPickerHTML() {
-  var e = UI.exDraft, h = '';
+  var e = UI.exDraft, h = '', used = livePhotosInUse();
   livePhotos().forEach(function (p) {
     var k = 'p:' + p.id;
-    h += '<button class="pk' + (e.img === k ? ' on' : '') + '" onclick="pickImg(\'' + k + '\')"><img src="' + p.data + '" alt=""></button>';
+    if (!used[p.id] && e.img !== k) return;   /* huérfana: no se muestra, ya no acumula */
+    h += '<div style="position:relative">' +
+      '<button class="pk' + (e.img === k ? ' on' : '') + '" style="width:100%" onclick="pickImg(\'' + k + '\')"><img src="' + p.data + '" alt=""></button>' +
+      '<button class="mini" title="Borrar esta foto" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;font-size:10px;background:var(--bad);color:#fff;border-radius:50%;border:2px solid var(--surface)" onclick="event.stopPropagation();deletePhotoConfirm(\'' + p.id + '\')">✕</button>' +
+      '</div>';
   });
+  if (!h) h = '<div class="hint" style="text-align:left;padding:2px 0">Aún no has subido ninguna foto.</div>';
+  return h;
+}
+function deletePhotoConfirm(id) {
+  if (!confirm('¿Borrar esta foto para siempre? Los ejercicios que la usan se quedarán con el icono en su lugar.')) return;
+  deletePhoto(id);
+  refreshExSheet();
+  toast('Foto borrada', 'ok');
+}
+function deletePhoto(id) {
+  var p = PH.find(function (x) { return x.id === id; });
+  if (p) { p.del = true; p.data = ''; p.mt = now(); }
+  var key = 'p:' + id;
+  DB.routines.forEach(function (r) { (r.ex || []).forEach(function (e) { if (e.img === key) e.img = ''; }); });
+  DB.exercises.forEach(function (e) { if (e.img === key) e.img = ''; });
+  if (UI.exDraft && UI.exDraft.img === key) UI.exDraft.img = '';
+  commit();
+}
+function exCatalogHTML() {
+  var e = UI.exDraft, h = '';
   Object.keys(IMGLIB).forEach(function (k) {
     h += '<button class="pk' + (e.img === k ? ' on' : '') + '" onclick="pickImg(\'' + k + '\')"><img src="' + imgSrc(k) + '" alt=""></button>';
   });
@@ -1591,9 +1731,7 @@ function exIconsHTML() {
 
 function refreshExSheet() {
   var a = document.getElementById('exPrev'); if (a) a.innerHTML = exPreviewHTML();
-  var b = document.getElementById('exPick'); if (b) b.innerHTML = exPickerHTML();
-  var c = document.getElementById('exIcons'); if (c) c.innerHTML = exIconsHTML();
-  var r = document.getElementById('exReuse'); if (r) r.parentElement.outerHTML = '<div class="fld"><label>¿Es el mismo ejercicio que ya tienes en otra rutina?</label>' + reuseHTML() + '</div>';
+  var b = document.getElementById('exImgTabBody'); if (b) b.innerHTML = imgTabBodyHTML();
 }
 
 function pickImg(k) { syncDraftFields(); UI.exDraft.img = k; refreshExSheet(); }
@@ -1656,7 +1794,7 @@ function onPhotoPick(input) {
    se mantiene igual en todos los sitios donde se usa. */
 function upsertCatalog(e) {
   var c = DB.exercises.find(function (x) { return x.id === e.id; });
-  var fields = { name: e.name, img: e.img, icon: e.icon, muscle: e.muscle || '' };
+  var fields = { name: e.name, img: e.img, icon: e.icon, muscle: e.muscle || '', muscles2: e.muscles2 || [] };
   if (c) { Object.assign(c, fields); c.mt = now(); c.del = false; }
   else DB.exercises.push(Object.assign({ id: e.id, mt: now() }, fields));
   propagateExerciseIdentity(e.id, fields);
@@ -1809,7 +1947,7 @@ function exDetailSheet(exId) {
     '</div>' +
     '<div style="flex:1;min-width:0">' +
     '<div class="sheet-h" style="margin-bottom:2px">' + esc(o.name) + '</div>' +
-    (o.muscle ? '<div class="sheet-s" style="margin-bottom:10px">' + esc(o.muscle) + '</div>' : '') +
+    (o.muscle ? '<div class="sheet-s" style="margin-bottom:10px">' + esc(o.muscle) + ((o.muscles2 || []).length ? ' · ' + o.muscles2.map(esc).join(', ') : '') + '</div>' : '') +
     '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
     '<button class="btn btn-n sm" style="width:auto;padding:9px 14px" onclick="editExGlobal(\'' + o.id + '\')">Editar</button>' +
     (uso.length
