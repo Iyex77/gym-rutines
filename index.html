@@ -1714,6 +1714,20 @@ function deletePhoto(id) {
   if (UI.exDraft && UI.exDraft.img === key) UI.exDraft.img = '';
   commit();
 }
+/* cuántas fotos tuyas hay guardadas que ningún ejercicio usa ahora mismo */
+function unusedPhotosCount() {
+  var used = livePhotosInUse();
+  return livePhotos().filter(function (p) { return !used[p.id]; }).length;
+}
+function deleteUnusedPhotosConfirm() {
+  var n = unusedPhotosCount();
+  if (!n) return;
+  if (!confirm('¿Borrar ' + n + ' foto' + (n === 1 ? '' : 's') + ' que no usa ningún ejercicio? No se puede deshacer.')) return;
+  var used = livePhotosInUse();
+  PH.forEach(function (p) { if (!p.del && !used[p.id]) { p.del = true; p.data = ''; p.mt = now(); } });
+  commit(); render();
+  toast('✓ ' + n + ' foto' + (n === 1 ? '' : 's') + ' borrada' + (n === 1 ? '' : 's'), 'ok');
+}
 function exCatalogHTML() {
   var e = UI.exDraft, h = '';
   Object.keys(IMGLIB).forEach(function (k) {
@@ -2499,6 +2513,9 @@ function viewSet() {
     '<button class="btn btn-n sm" onclick="exportData()">Descargar copia de seguridad</button>' +
     '<div style="height:8px"></div><button class="btn btn-n sm" onclick="document.getElementById(\'impf\').click()">Restaurar copia</button>' +
     '<input type="file" id="impf" accept="application/json,.json" style="display:none" onchange="importData(this)">' +
+    (unusedPhotosCount()
+      ? '<div style="height:8px"></div><button class="btn btn-d sm" onclick="deleteUnusedPhotosConfirm()">Borrar ' + unusedPhotosCount() + ' foto' + (unusedPhotosCount() === 1 ? '' : 's') + ' sin usar</button>'
+      : '') +
     '<div style="height:8px"></div><button class="btn btn-d sm" onclick="resetAll()">Borrar todo y empezar de cero</button>' +
     '</div>';
 
