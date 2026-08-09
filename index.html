@@ -58,7 +58,13 @@ script,template{display:none!important}   /* que nunca cuenten como item flex */
   --ok:#3ddc84; --warn:#ffc53d; --bad:#ff5a5a;
   --topfix:0px; --docmin:100vh;
 }
-html{background:var(--bg);overflow-x:hidden;-webkit-text-size-adjust:100%}
+/* overscroll-behavior-y va aquí, en <html>, porque es el elemento que de
+   verdad hace scroll del documento (document.scrollingElement) — puesto en
+   <body> (que no scrollea) Chrome puede llegar a tragarse el scroll por
+   rueda/trackpad entero en vez de solo el rebote al llegar al final; el
+   arrastre directo de la barra no pasa por ese camino, por eso "solo
+   funciona arrastrando la barra" era la pista de este bug exacto. */
+html{background:var(--bg);overflow-x:hidden;overscroll-behavior-y:none;-webkit-text-size-adjust:100%}
 /* el candado de scroll de la hoja modal va en <html>, no en <body>: en
    modo estándar el elemento que de verdad controla el scroll del documento
    es <html> (document.scrollingElement) — bloquear solo <body> no bloquea
@@ -67,7 +73,7 @@ html.sheet-open{overflow-y:hidden}
 body{
   background:var(--bg); color:var(--txt);
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter",system-ui,sans-serif;
-  -webkit-font-smoothing:antialiased; overscroll-behavior-y:none;
+  -webkit-font-smoothing:antialiased;
   font-size:15px; line-height:1.45;
   /* Igual que la app de Japón: scrollea la PÁGINA, no un contenedor interno.
      El montaje anterior (body con overflow:hidden + #app fijo a pantalla
@@ -1763,7 +1769,7 @@ function viewExercises() {
   all.forEach(function (o) {
     var uso = exUsage(o.id);
     h += '<button class="ex" style="width:100%;text-align:left;cursor:pointer" onclick="exDetailSheet(\'' + o.id + '\')">' +
-      '<div class="ex-h">' + exThumb(o, false) +
+      '<div class="ex-h">' + exThumb(o, true) +
       '<div class="ex-b"><div class="ex-n">' + esc(o.name) + '</div>' +
       '<div class="ex-m">' + (o.muscle ? esc(o.muscle) + ' · ' : '') + (uso.length ? 'Usado en ' + uso.map(esc).join(', ') : 'Sin asignar a ninguna rutina') + '</div></div>' +
       '<div class="ex-chev" style="transform:rotate(-90deg)">▾</div></div></button>';
