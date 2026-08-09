@@ -563,7 +563,7 @@ function allExercisesFlat(excludeRid) {
       if (visto[ex.id]) return;
       visto[ex.id] = 1;
       out.push({ id: ex.id, name: ex.name, img: ex.img || '', icon: ex.icon || 'dumbbell',
-        muscle: ex.muscle || '', muscles2: ex.muscles2 || [], sets: ex.sets || 3, reps: ex.reps || 12, rest: ex.rest || 60, note: ex.note || '',
+        muscle: ex.muscle || '', muscles2: ex.muscles2 || [], type: ex.type || 'fuerza', sets: ex.sets || 3, reps: ex.reps || 12, rest: ex.rest || 60, note: ex.note || '',
         routineName: r.name, routineColor: r.color });
     });
   });
@@ -571,7 +571,7 @@ function allExercisesFlat(excludeRid) {
     if (visto[ex.id]) return;
     visto[ex.id] = 1;
     out.push({ id: ex.id, name: ex.name, img: ex.img || '', icon: ex.icon || 'dumbbell',
-      muscle: ex.muscle || '', muscles2: ex.muscles2 || [], sets: ex.sets || 3, reps: ex.reps || 12, rest: ex.rest || 60, note: ex.note || '',
+      muscle: ex.muscle || '', muscles2: ex.muscles2 || [], type: ex.type || 'fuerza', sets: ex.sets || 3, reps: ex.reps || 12, rest: ex.rest || 60, note: ex.note || '',
       routineName: 'Sin rutina', routineColor: '' });
   });
   return out;
@@ -633,12 +633,12 @@ function propagateExerciseIdentity(exId, fields) {
     if (r.del) return;
     (r.ex || []).forEach(function (ex) {
       if (ex.id !== exId) return;
-      ex.name = fields.name; ex.img = fields.img; ex.icon = fields.icon; ex.muscle = fields.muscle || ''; ex.muscles2 = fields.muscles2 || [];
+      ex.name = fields.name; ex.img = fields.img; ex.icon = fields.icon; ex.muscle = fields.muscle || ''; ex.muscles2 = fields.muscles2 || []; ex.type = fields.type || 'fuerza';
       r.mt = now();
     });
   });
   var c = DB.exercises.find(function (x) { return x.id === exId; });
-  if (c) { c.name = fields.name; c.img = fields.img; c.icon = fields.icon; c.muscle = fields.muscle || ''; c.muscles2 = fields.muscles2 || []; c.mt = now(); }
+  if (c) { c.name = fields.name; c.img = fields.img; c.icon = fields.icon; c.muscle = fields.muscle || ''; c.muscles2 = fields.muscles2 || []; c.type = fields.type || 'fuerza'; c.mt = now(); }
 }
 
 /* Fusiona dos ejercicios que resultaron ser el mismo aparato con id distinto
@@ -922,7 +922,29 @@ function topSet(entry) {
   (entry.sets || []).forEach(function (st) { var k = parseFloat(st.kg); if (k > best) best = k; });
   return best;
 }
-function sessionFilled(s) { return (s.entries || []).some(function (e) { return (e.sets || []).some(function (st) { return st.kg || st.reps; }); }); }
+/* ¿tiene algo apuntado esta entrada? — de fuerza (series) o de cardio
+   (duración/distancia/nivel). Un solo sitio para esta pregunta, en vez de
+   repetir "algún set con kg o reps" en cada función que la necesita. */
+function entryFilled(en) {
+  if (!en) return false;
+  if (en.type === 'cardio') return !!(en.duration || en.distance || en.level);
+  return (en.sets || []).some(function (st) { return st.kg || st.reps; });
+}
+/* métrica única para comparar "mejor que la vez pasada": peso máximo en
+   fuerza, minutos en cardio (más tiempo = ha aguantado más). */
+function entryMetric(en) {
+  if (!en) return 0;
+  if (en.type === 'cardio') return parseFloat(en.duration) || 0;
+  return topSet(en);
+}
+function cardioSummary(en) {
+  var partes = [];
+  if (en.duration) partes.push(en.duration + ' min');
+  if (en.distance) partes.push(en.distance + ' km');
+  if (en.level) partes.push('nivel ' + en.level);
+  return partes.join(' · ') || '—';
+}
+function sessionFilled(s) { return (s.entries || []).some(entryFilled); }
 
 /* último registro de un ejercicio por nombre (para mostrar "la vez pasada") */
 /* Busca la última vez que se hizo un ejercicio. Empareja primero por id del
@@ -930,15 +952,14 @@ function sessionFilled(s) { return (s.entries || []).some(function (e) { return 
    arrastrando su historial en vez de empezar de cero. */
 function lastFor(exName, beforeId, beforeDate, exId) {
   var ss = liveSessions();   // ya viene ordenado de más reciente a más antiguo
-  var lleno = function (e) { return e && (e.sets || []).some(function (st) { return st.kg || st.reps; }); };
   for (var i = 0; i < ss.length; i++) {
     if (beforeId && ss[i].id === beforeId) continue;
     // al corregir una sesión antigua, la referencia debe ser anterior a ella, no posterior
     if (beforeDate && ss[i].date > beforeDate) continue;
     var ents = ss[i].entries || [];
     var e = null;
-    if (exId) e = ents.find(function (x) { return x.exid === exId && lleno(x); });
-    if (!e) e = ents.find(function (x) { return x.name === exName && lleno(x); });
+    if (exId) e = ents.find(function (x) { return x.exid === exId && entryFilled(x); });
+    if (!e) e = ents.find(function (x) { return x.name === exName && entryFilled(x); });
     /* Sin respaldo por posición: insertar o reordenar ejercicios desplaza los
        índices y produce emparejamientos falsos (un ejercicio nuevo hereda por
        error los datos de otro). Sin exid ni nombre exacto, no hay precarga —
@@ -1057,6 +1078,15 @@ function startSession(rid) {
   UI.sess = {
     id: uid('s'), date: todayISO(), rid: r.id, rname: r.name, ricon: r.icon || 'dumbbell', rcolor: r.color || 'orange', mt: now(),
     entries: (r.ex || []).map(function (e, idx) {
+      if (e.type === 'cardio') {
+        var prevC = lastFor(e.name, null, todayISO(), e.id);
+        return {
+          name: e.name, exid: e.id, img: e.img || '', icon: e.icon || 'dumbbell', note: '', type: 'cardio',
+          duration: '', distance: '', level: '',
+          prevDuration: prevC ? prevC.e.duration : '', prevDistance: prevC ? prevC.e.distance : '', prevLevel: prevC ? prevC.e.level : '',
+          target: 'Cardio' + (e.note ? ' · ' + e.note : '')
+        };
+      }
       /* se arrastran los pesos de la última vez: así solo hay que escribir
          si cambia algo. Quedan marcados como "sin confirmar" hasta que los toques. */
       var prev = lastFor(e.name, null, todayISO(), e.id);
@@ -1097,7 +1127,7 @@ function viewSession() {
   h += '<div class="fld"><label>Fecha de la sesión</label><input type="date" value="' + esc(s.date) +
     '" onchange="UI.sess.date=this.value"></div>';
 
-  var pendientes = s.entries.filter(function (e) { return e.pre && !e.touched; });
+  var pendientes = s.entries.filter(function (e) { return e.type !== 'cardio' && e.pre && !e.touched; });
   var ant = UI.isNew ? lastOfRoutine(s.rid, s.id) : null;
 
   if (pendientes.length) {
@@ -1108,7 +1138,7 @@ function viewSession() {
   } else if (ant) {
     /* señal real de "sin vincular": entradas para las que la precarga no
        encontró NADA en ninguna rutina — no "la rutina tiene ejercicios" */
-    var sinVincular = s.entries.filter(function (e) { return !e.pre; });
+    var sinVincular = s.entries.filter(function (e) { return e.type !== 'cardio' && !e.pre; });
     if (sinVincular.length) {
       /* la causa real de que no haya precarga: hay ejercicios sin historial
          vinculado, ya sea porque cambiaron de nombre o porque son el mismo
@@ -1128,6 +1158,27 @@ function viewSession() {
   h += '<div class="sect">Ejercicios</div>';
 
   s.entries.forEach(function (e, i) {
+    if (e.type === 'cardio') {
+      var confC = entryFilled(e);
+      var prevTxt = cardioSummary({ duration: e.prevDuration, distance: e.prevDistance, level: e.prevLevel });
+      h += '<div class="ex' + (confC ? ' done' : '') + '" id="ex' + i + '">' +
+        '<div class="ex-h" onclick="toggleEx(' + i + ')">' + exThumb(e, true) +
+        '<div class="ex-b"><div class="ex-n">' + esc(liveExName(e, s.rid)) + (confC ? '<span class="tick">✓</span>' : '') + '</div>' +
+        '<div class="ex-m">' + esc(e.target || 'Cardio') +
+        (prevTxt !== '—' ? '<br><span style="color:var(--acc)">Anterior: ' + prevTxt + '</span>' : '') +
+        '</div></div>' +
+        '<button class="swap-btn" onclick="event.stopPropagation();swapExercise(' + i + ')">' + iconSVG('swap', 14) + '<span>Cambiar</span></button>' +
+        '<div class="ex-chev">▾</div></div>' +
+        '<div class="ex-body">' +
+        '<div class="row2">' +
+        '<div class="fld"><label>Duración min</label><input class="inp" type="number" inputmode="numeric" min="0" placeholder="' + (e.prevDuration || '—') + '" value="' + esc(e.duration) + '" onfocus="this.select()" oninput="setCardioVal(' + i + ',\'duration\',this.value)"></div>' +
+        '<div class="fld"><label>Distancia km</label><input class="inp" type="number" inputmode="decimal" step="0.1" min="0" placeholder="' + (e.prevDistance || '—') + '" value="' + esc(e.distance) + '" onfocus="this.select()" oninput="setCardioVal(' + i + ',\'distance\',this.value)"></div>' +
+        '<div class="fld"><label>Nivel</label><input class="inp" type="number" inputmode="numeric" min="0" placeholder="' + (e.prevLevel || '—') + '" value="' + esc(e.level) + '" onfocus="this.select()" oninput="setCardioVal(' + i + ',\'level\',this.value)"></div>' +
+        '</div>' +
+        '<textarea class="ta" placeholder="Notas del ejercicio…" oninput="UI.sess.entries[' + i + '].note=this.value">' + esc(e.note || '') + '</textarea>' +
+        '</div></div>';
+      return;
+    }
     var prev = lastFor(e.name, s.id, s.date, e.exid);
     var hasVals = (e.sets || []).some(function (st) { return st.kg || st.reps; });
     var pend = e.pre && !e.touched;                 /* precargado, sin confirmar */
@@ -1183,6 +1234,12 @@ function setVal(i, j, k, v) {
     card.querySelectorAll('.inp.pre').forEach(function (x) { x.classList.remove('pre'); });
   }
 }
+function setCardioVal(i, field, v) {
+  var e = UI.sess.entries[i];
+  e[field] = v; UI.dirty = true;
+  var card = document.getElementById('ex' + i);
+  if (card) card.classList.toggle('done', entryFilled(e));
+}
 /* confirmar un ejercicio tal cual venía precargado */
 function confirmEx(i) {
   UI.sess.entries[i].touched = true; UI.dirty = true;
@@ -1197,6 +1254,7 @@ function copiarAnterior() {
   if (!ant) { toast('No hay ninguna sesión anterior de esta rutina', 'bad'); return; }
   var n = 0;
   s.entries.forEach(function (e, i) {
+    if (e.type === 'cardio') return;   /* ya lleva el anterior como referencia (placeholder), no hay nada que "copiar" */
     var ents = ant.entries || [], src = null;
     var lleno = function (x) { return x && (x.sets || []).some(function (st) { return st.kg || st.reps; }); };
     if (e.exid) src = ents.find(function (x) { return x.exid === e.exid && lleno(x); });
@@ -1251,7 +1309,7 @@ function saveSession() {
 
   /* si algo quedó precargado y sin confirmar, no lo damos por hecho a la ligera:
      guardarlo sin más registraría un ejercicio que quizá no hiciste */
-  var pend = s.entries.filter(function (e) { return e.pre && !e.touched; });
+  var pend = s.entries.filter(function (e) { return e.type !== 'cardio' && e.pre && !e.touched; });
   if (pend.length && UI.isNew) {
     openSheet('<div class="grab"></div><div class="sheet-h">' + pend.length + ' sin confirmar</div>' +
       '<div class="sheet-s">Llevan los pesos de la última vez, pero no los has tocado</div>' +
@@ -1443,7 +1501,7 @@ function viewREdit() {
   r.ex.forEach(function (e, i) {
     h += '<div class="ex"><div class="ex-h">' + exThumb(e, false) +
       '<div class="ex-b"><div class="ex-n">' + esc(e.name) + '</div>' +
-      '<div class="ex-m">' + e.sets + '×' + e.reps + ' · ' + e.rest + 's' + (e.note ? ' · ' + esc(e.note) : '') + '</div></div>' +
+      '<div class="ex-m">' + (e.type === 'cardio' ? 'Cardio' : e.sets + '×' + e.reps + ' · ' + e.rest + 's') + (e.note ? ' · ' + esc(e.note) : '') + '</div></div>' +
       '<button class="mini" onclick="moveEx(' + i + ',-1)"' + (i === 0 ? ' disabled style="opacity:.3"' : '') + '>↑</button>' +
       '<button class="mini" onclick="moveEx(' + i + ',1)"' + (i === r.ex.length - 1 ? ' disabled style="opacity:.3"' : '') + '>↓</button>' +
       '</div><div class="ex-body" style="display:block;padding-top:10px">' +
@@ -1479,10 +1537,11 @@ function editEx(i) {
   UI.exIdx = i;
   UI.exGlobal = false;
   UI.exDraft = isNew
-    ? { id: uid('e'), name: '', img: '', icon: 'dumbbell', sets: 3, reps: 12, rest: 60, note: '', muscle: '', muscles2: [] }
+    ? { id: uid('e'), name: '', img: '', icon: 'dumbbell', sets: 3, reps: 12, rest: 60, note: '', muscle: '', muscles2: [], type: 'fuerza' }
     : JSON.parse(JSON.stringify(UI.editRoutine.ex[i]));
   if (!UI.exDraft.muscles2) UI.exDraft.muscles2 = [];
   UI.exImgTab = defaultImgTab(UI.exDraft);
+  UI.exIsNew = isNew;
   openSheet(exSheetHTML(isNew));
 }
 function defaultImgTab(e) {
@@ -1500,10 +1559,16 @@ function editExGlobal(exId) {
   UI.exGlobal = true;
   var src = exId ? allExercisesFlat().find(function (x) { return x.id === exId; }) : null;
   UI.exDraft = src
-    ? { id: src.id, name: src.name, img: src.img, icon: src.icon, sets: src.sets, reps: src.reps, rest: src.rest, note: src.note, muscle: src.muscle || '', muscles2: (src.muscles2 || []).slice() }
-    : { id: uid('e'), name: '', img: '', icon: 'dumbbell', sets: 3, reps: 12, rest: 60, note: '', muscle: '', muscles2: [] };
+    ? { id: src.id, name: src.name, img: src.img, icon: src.icon, sets: src.sets, reps: src.reps, rest: src.rest, note: src.note, muscle: src.muscle || '', muscles2: (src.muscles2 || []).slice(), type: src.type || 'fuerza' }
+    : { id: uid('e'), name: '', img: '', icon: 'dumbbell', sets: 3, reps: 12, rest: 60, note: '', muscle: '', muscles2: [], type: 'fuerza' };
   UI.exImgTab = defaultImgTab(UI.exDraft);
+  UI.exIsNew = !src;
   openSheet(exSheetHTML(!src));
+}
+function setExType(t) {
+  syncDraftFields();
+  UI.exDraft.type = (t === 'cardio') ? 'cardio' : 'fuerza';
+  openSheet(exSheetHTML(UI.exIsNew));
 }
 
 function exSheetHTML(isNew) {
@@ -1511,13 +1576,17 @@ function exSheetHTML(isNew) {
   return '<div class="grab"></div><div class="sheet-h">' + (isNew ? 'Nuevo ejercicio' : 'Editar ejercicio') + '</div>' +
     '<div class="sheet-s">Nombre, músculo e imagen — series/reps/descanso abajo</div>' +
     '<div class="fld"><label>Nombre</label><input id="exn" placeholder="Ej. Leg Press" value="' + esc(e.name) + '"></div>' +
+    '<div class="fld"><label>Tipo</label><div class="tabbar">' +
+    '<button type="button" class="' + (e.type === 'cardio' ? '' : 'on') + '" onclick="setExType(\'fuerza\')">🏋️ Fuerza</button>' +
+    '<button type="button" class="' + (e.type === 'cardio' ? 'on' : '') + '" onclick="setExType(\'cardio\')">🏃 Cardio</button>' +
+    '</div></div>' +
     '<div class="fld"><label>Descripción corta</label><input id="exd" placeholder="Ej. Cuádriceps" value="' + esc(e.note || '') + '"></div>' +
     '<div class="fld" id="exMuscles">' + musclesChipsHTML() + '</div>' +
-    '<div class="row2">' +
+    (e.type === 'cardio' ? '' : '<div class="row2">' +
     '<div class="fld"><label>Series</label><input id="exs" type="number" inputmode="numeric" min="1" max="10" value="' + e.sets + '"></div>' +
     '<div class="fld"><label>Reps</label><input id="exr" type="number" inputmode="numeric" min="1" max="50" value="' + e.reps + '"></div>' +
     '<div class="fld"><label>Descanso s</label><input id="exp" type="number" inputmode="numeric" min="0" max="300" step="15" value="' + e.rest + '"></div>' +
-    '</div>' +
+    '</div>') +
     '<div class="fld"><label>Imagen</label><div id="exPrev">' + exPreviewHTML() + '</div></div>' +
     '<div class="fld" id="exImgTab">' + imgTabHTML() + '</div>' +
     (UI.exGlobal ? '' : linkOldHTML()) +
@@ -1856,7 +1925,7 @@ function onPhotoPick(input) {
    se mantiene igual en todos los sitios donde se usa. */
 function upsertCatalog(e) {
   var c = DB.exercises.find(function (x) { return x.id === e.id; });
-  var fields = { name: e.name, img: e.img, icon: e.icon, muscle: e.muscle || '', muscles2: e.muscles2 || [] };
+  var fields = { name: e.name, img: e.img, icon: e.icon, muscle: e.muscle || '', muscles2: e.muscles2 || [], type: e.type || 'fuerza' };
   if (c) { Object.assign(c, fields); c.mt = now(); c.del = false; }
   else DB.exercises.push(Object.assign({ id: e.id, mt: now() }, fields));
   propagateExerciseIdentity(e.id, fields);
@@ -2017,13 +2086,15 @@ function exDetailSheet(exId) {
       : '<button class="btn btn-d sm" style="width:auto;padding:9px 14px" onclick="deleteExerciseGlobal(\'' + o.id + '\')">Eliminar</button>') +
     '</div></div></div>' +
     '<div class="hrows" style="margin-top:16px">' +
-    '<div class="hrow"><span class="hn">Series</span><span class="hv">' + (o.sets || 3) + '</span></div>' +
-    '<div class="hrow"><span class="hn">Repeticiones</span><span class="hv">' + (o.reps || 12) + '</span></div>' +
-    '<div class="hrow"><span class="hn">Descanso</span><span class="hv">' + (o.rest || 60) + ' s</span></div>' +
+    (o.type === 'cardio'
+      ? '<div class="hrow"><span class="hn">Tipo</span><span class="hv">Cardio</span></div>'
+      : '<div class="hrow"><span class="hn">Series</span><span class="hv">' + (o.sets || 3) + '</span></div>' +
+        '<div class="hrow"><span class="hn">Repeticiones</span><span class="hv">' + (o.reps || 12) + '</span></div>' +
+        '<div class="hrow"><span class="hn">Descanso</span><span class="hv">' + (o.rest || 60) + ' s</span></div>') +
     (o.note ? '<div class="hrow"><span class="hn">Notas</span><span class="hv">' + esc(o.note) + '</span></div>' : '') +
     '</div>' +
     '<div class="hint" style="text-align:left;padding-top:12px">' + (uso.length ? 'Usado en ' + uso.map(esc).join(', ') : 'Sin asignar a ninguna rutina') +
-    (uso.length > 1 ? ' — series/reps/descanso pueden variar entre rutinas; aquí se muestran los de ' + esc(uso[0]) + '.' : '') + '</div>';
+    (uso.length > 1 && o.type !== 'cardio' ? ' — series/reps/descanso pueden variar entre rutinas; aquí se muestran los de ' + esc(uso[0]) + '.' : '') + '</div>';
   openSheet(h);
 }
 function deleteExerciseGlobal(exId) {
@@ -2046,9 +2117,9 @@ function prevTop(exName, s, exId) {
     if (o.date > s.date) continue;
     if (o.date === s.date && (o.mt || 0) >= (s.mt || 0)) continue;
     var ents = o.entries || [], e = null;
-    if (exId) e = ents.find(function (x) { return x.exid === exId && topSet(x) > 0; });
-    if (!e) e = ents.find(function (x) { return x.name === exName && topSet(x) > 0; });
-    if (e) return topSet(e);
+    if (exId) e = ents.find(function (x) { return x.exid === exId && entryMetric(x) > 0; });
+    if (!e) e = ents.find(function (x) { return x.name === exName && entryMetric(x) > 0; });
+    if (e) return entryMetric(e);
   }
   return null;
 }
@@ -2086,11 +2157,12 @@ function viewHist() {
       h += '<div class="sect">' + MES[+p[1] - 1].toUpperCase() + ' ' + p[0] + '</div>';
     }
     var col = sessColor(s);
-    var filled = (s.entries || []).filter(function (e) { return topSet(e) > 0; });
+    var filled = (s.entries || []).filter(function (e) { return entryMetric(e) > 0; });
     var mejoras = 0, bajadas = 0;
     filled.forEach(function (e) {
       var pv = prevTop(e.name, s, e.exid); if (pv == null) return;
-      if (topSet(e) > pv) mejoras++; else if (topSet(e) < pv) bajadas++;
+      var cur = entryMetric(e);
+      if (cur > pv) mejoras++; else if (cur < pv) bajadas++;
     });
 
     h += '<button class="hs" style="border-left:3px solid ' + col + '" onclick="openSession(\'' + s.id + '\')">' +
@@ -2104,6 +2176,12 @@ function viewHist() {
 
     h += '<div class="hrows">';
     filled.forEach(function (e) {
+      if (e.type === 'cardio') {
+        h += '<div class="hrow"><span class="hn">' + esc(liveExName(e, s.rid)) + '</span>' +
+          '<span class="hv">' + cardioSummary(e) + '</span>' +
+          deltaHTML(entryMetric(e), prevTop(e.name, s, e.exid)) + '</div>';
+        return;
+      }
       var best = null, bestReps = '';
       (e.sets || []).forEach(function (st) {
         var k = parseFloat(st.kg);
