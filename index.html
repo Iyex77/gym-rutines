@@ -1161,6 +1161,8 @@ function viewSession() {
   }
 
   h += '<div class="sect">Ejercicios</div>';
+  var sessR = liveRoutines().find(function (x) { return x.id === s.rid; });
+  if (sessR) h += muscleCountsHTML(sessR);
 
   s.entries.forEach(function (e, i) {
     if (e.type === 'cardio') {
