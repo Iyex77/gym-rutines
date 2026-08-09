@@ -602,7 +602,7 @@ function adoptSharedId(rid, exId, otherExId) {
   DB.sessions.forEach(function (s) {
     if (s.rid !== rid) return;
     (s.entries || []).forEach(function (en) {
-      if (en.exid === oldId) { en.exid = otherExId; n++; }
+      if (en.exid === oldId) { en.exid = otherExId; n++; s.mt = now(); }
     });
   });
   return n;
@@ -613,7 +613,10 @@ function linkOldName(rid, oldName, exId) {
   DB.sessions.forEach(function (s) {
     if (s.rid !== rid) return;
     (s.entries || []).forEach(function (en) {
-      if (!en.exid && en.name === oldName) { en.exid = exId; n++; }
+      /* sin esto, un dispositivo que aún no haya recibido este cambio no lo
+         reconoce como "más reciente" al fusionar y puede pisarlo de vuelta
+         con su propia copia sin vincular la próxima vez que sincronice */
+      if (!en.exid && en.name === oldName) { en.exid = exId; n++; s.mt = now(); }
     });
   });
   return n;
