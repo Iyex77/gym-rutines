@@ -299,6 +299,7 @@ select.sel:focus{outline:none;border-color:var(--acc)}
 .hrow:last-child{border-bottom:none}
 .hn{flex:1;min-width:0;font-size:12.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hv{font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;flex:0 0 auto}
+.hrow-sets{font-size:11px;color:var(--dim2);font-variant-numeric:tabular-nums}
 .hd{font-size:10.5px;font-weight:800;border-radius:5px;padding:2px 6px;flex:0 0 auto;min-width:42px;text-align:center}
 .hd.up{background:rgba(61,220,132,.14);color:var(--ok)}
 .hd.down{background:rgba(255,90,90,.13);color:var(--bad)}
@@ -912,20 +913,42 @@ function toast(msg, kind) {
 }
 
 /* ---------- cálculo ---------- */
+function entryVolume(e) {
+  var v = 0;
+  (e.sets || []).forEach(function (st) {
+    var kg = parseFloat(st.kg), rp = parseFloat(st.reps);
+    if (kg > 0 && rp > 0) v += kg * rp;
+  });
+  return Math.round(v);
+}
 function volSession(s) {
   var v = 0;
   (s.entries || []).forEach(function (e) {
-    (e.sets || []).forEach(function (st) {
-      var kg = parseFloat(st.kg), rp = parseFloat(st.reps);
-      if (kg > 0 && rp > 0) v += kg * rp;
-    });
+    if (e.type === 'cardio') return;
+    v += entryVolume(e);
   });
   return Math.round(v);
+}
+/* "45×12 · 45×10 · 45×10" — todas las series tal cual, no solo la mejor */
+function setsListStr(e) {
+  return (e.sets || []).filter(function (st) { return st.kg || st.reps; })
+    .map(function (st) { return (st.kg || 0) + '×' + (st.reps || 0); }).join(' · ');
 }
 function topSet(entry) {
   var best = 0;
   (entry.sets || []).forEach(function (st) { var k = parseFloat(st.kg); if (k > best) best = k; });
   return best;
+}
+/* la mejor serie como par peso+reps, no solo el peso: repetir el mismo peso
+   con menos repeticiones (p. ej. porque fallaste una serie) es una bajada de
+   verdad, y comparar solo el número de kg lo pintaba como "igual". */
+function topSetPair(entry) {
+  var kg = 0, reps = 0;
+  (entry.sets || []).forEach(function (st) {
+    var k = parseFloat(st.kg) || 0, r = parseFloat(st.reps) || 0;
+    if (k > kg || (k === kg && r > reps)) { kg = k; reps = r; }
+  });
+  return { kg: kg, reps: reps };
 }
 /* ¿tiene algo apuntado esta entrada? — de fuerza (series) o de cardio
    (duración/distancia/nivel). Un solo sitio para esta pregunta, en vez de
@@ -2189,8 +2212,8 @@ function deleteExerciseGlobal(exId) {
 /* ============================================================
    Pantalla: HISTORIAL
    ============================================================ */
-/* mejor serie del mismo ejercicio en la sesión anterior a esta */
-function prevTop(exName, s, exId) {
+/* entrada del mismo ejercicio en la sesión anterior a esta (fuerza o cardio) */
+function prevEntry(exName, s, exId) {
   var ss = liveSessions();
   for (var i = 0; i < ss.length; i++) {
     var o = ss[i];
@@ -2200,9 +2223,15 @@ function prevTop(exName, s, exId) {
     var ents = o.entries || [], e = null;
     if (exId) e = ents.find(function (x) { return x.exid === exId && entryMetric(x) > 0; });
     if (!e) e = ents.find(function (x) { return x.name === exName && entryMetric(x) > 0; });
-    if (e) return entryMetric(e);
+    if (e) return e;
   }
   return null;
+}
+/* mejor serie (peso) del mismo ejercicio en la sesión anterior — usado para
+   cardio (duración) y donde solo hace falta el número. */
+function prevTop(exName, s, exId) {
+  var e = prevEntry(exName, s, exId);
+  return e ? entryMetric(e) : null;
 }
 function deltaHTML(cur, prev) {
   if (prev == null) return '<span class="hd new">nuevo</span>';
@@ -2211,9 +2240,29 @@ function deltaHTML(cur, prev) {
   if (d < 0) return '<span class="hd down">' + d + '</span>';
   return '<span class="hd same">=</span>';
 }
+/* compara la mejor serie de fuerza por peso Y repeticiones: mismo peso con
+   menos repeticiones (p. ej. fallaste una serie) cuenta como bajada, no como
+   "igual" — antes solo se miraba el peso. 1 = mejora, -1 = bajada, 0 = igual */
+function compareTopSets(cur, prev) {
+  if (cur.kg !== prev.kg) return cur.kg > prev.kg ? 1 : -1;
+  if (cur.reps !== prev.reps) return cur.reps > prev.reps ? 1 : -1;
+  return 0;
+}
+function deltaSetHTML(cur, prev) {
+  if (!prev) return '<span class="hd new">nuevo</span>';
+  var c = compareTopSets(cur, prev);
+  if (c === 0) return '<span class="hd same">=</span>';
+  if (cur.kg !== prev.kg) {
+    var d = Math.round((cur.kg - prev.kg) * 10) / 10;
+    return c > 0 ? '<span class="hd up">+' + d + '</span>' : '<span class="hd down">' + d + '</span>';
+  }
+  var dr = cur.reps - prev.reps;
+  return c > 0 ? '<span class="hd up">+' + dr + ' reps</span>' : '<span class="hd down">' + dr + ' reps</span>';
+}
 function totalSets(s) {
   var n = 0;
   (s.entries || []).forEach(function (e) {
+    if (e.type === 'cardio') return;
     (e.sets || []).forEach(function (st) { if (st.kg || st.reps) n++; });
   });
   return n;
@@ -2239,11 +2288,13 @@ function viewHist() {
     }
     var col = sessColor(s);
     var filled = (s.entries || []).filter(function (e) { return entryMetric(e) > 0; });
+    var fuerza = filled.filter(function (e) { return e.type !== 'cardio'; });
+    var cardio = filled.filter(function (e) { return e.type === 'cardio'; });
     var mejoras = 0, bajadas = 0;
-    filled.forEach(function (e) {
-      var pv = prevTop(e.name, s, e.exid); if (pv == null) return;
-      var cur = entryMetric(e);
-      if (cur > pv) mejoras++; else if (cur < pv) bajadas++;
+    fuerza.forEach(function (e) {
+      var pv = prevEntry(e.name, s, e.exid); if (!pv) return;
+      var c = compareTopSets(topSetPair(e), topSetPair(pv));
+      if (c > 0) mejoras++; else if (c < 0) bajadas++;
     });
 
     h += '<button class="hs" style="border-left:3px solid ' + col + '" onclick="openSession(\'' + s.id + '\')">' +
@@ -2256,26 +2307,33 @@ function viewHist() {
       '</div>';
 
     h += '<div class="hrows">';
-    filled.forEach(function (e) {
-      if (e.type === 'cardio') {
-        h += '<div class="hrow"><span class="hn">' + esc(liveExName(e, s.rid)) + '</span>' +
-          '<span class="hv">' + cardioSummary(e) + '</span>' +
-          deltaHTML(entryMetric(e), prevTop(e.name, s, e.exid)) + '</div>';
-        return;
-      }
-      var best = null, bestReps = '';
-      (e.sets || []).forEach(function (st) {
-        var k = parseFloat(st.kg);
-        if (k > 0 && (best === null || k > best)) { best = k; bestReps = st.reps || ''; }
-      });
-      h += '<div class="hrow"><span class="hn">' + esc(liveExName(e, s.rid)) + '</span>' +
-        '<span class="hv">' + best + ' kg' + (bestReps ? ' × ' + bestReps : '') + '</span>' +
-        deltaHTML(best, prevTop(e.name, s, e.exid)) + '</div>';
+    fuerza.forEach(function (e) {
+      var cur = topSetPair(e);
+      var pv = prevEntry(e.name, s, e.exid);
+      h += '<div class="hrow" style="flex-direction:column;align-items:stretch;gap:2px">' +
+        '<div style="display:flex;align-items:center;gap:8px">' +
+        '<span class="hn">' + esc(liveExName(e, s.rid)) + '</span>' +
+        '<span class="hv">' + cur.kg + ' kg' + (cur.reps ? ' × ' + cur.reps : '') + '</span>' +
+        deltaSetHTML(cur, pv ? topSetPair(pv) : null) +
+        '</div>' +
+        '<div class="hrow-sets">' + setsListStr(e) + ' · ' + entryVolume(e).toLocaleString('es-ES') + ' kg</div>' +
+        '</div>';
     });
     h += '</div>';
 
-    h += '<div class="hfoot">' + filled.length + ' ejercicios · ' + totalSets(s) + ' series · ' +
-      volSession(s).toLocaleString('es-ES') + ' kg movidos en total</div>';
+    if (cardio.length) {
+      h += '<div class="hrows" style="margin-top:8px;padding-top:10px;border-top:1px dashed var(--line)">' +
+        '<div style="font-size:10.5px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Cardio</div>';
+      cardio.forEach(function (e) {
+        h += '<div class="hrow"><span class="hn">' + esc(liveExName(e, s.rid)) + '</span>' +
+          '<span class="hv">' + cardioSummary(e) + '</span>' +
+          deltaHTML(entryMetric(e), prevTop(e.name, s, e.exid)) + '</div>';
+      });
+      h += '</div>';
+    }
+
+    h += '<div class="hfoot">' + fuerza.length + ' ejercicio' + (fuerza.length === 1 ? '' : 's') + ' de fuerza · ' + totalSets(s) + ' series · ' +
+      volSession(s).toLocaleString('es-ES') + ' kg movidos' + (cardio.length ? ' · ' + cardio.length + ' cardio' : '') + '</div>';
     h += '</button>';
   });
   h += '<div style="height:4px"></div>' +
@@ -2665,7 +2723,7 @@ function explainMetrics() {
     exp('Semanas seguidas', 'Semanas consecutivas en las que has ido al menos una vez. Si te saltas una semana entera, vuelve a cero. Mide constancia, no intensidad.') +
     exp('Peso total movido', 'Suma de <b>peso × repeticiones</b> de todas las series.<br><br>Ejemplo: 3 series de 12 repeticiones con 40 kg son 40 × 12 × 3 = <b>1.440 kg</b>.<br><br>No es el peso que levantas de una vez: es el trabajo acumulado. Sirve para comparar sesiones entre sí' + (ej ? ' (tu última salió ' + ej.toLocaleString('es-ES') + ' kg)' : '') + '. Si sube con el tiempo, estás progresando aunque el peso por serie parezca el mismo.') +
     exp('Media por sesión', 'El peso total movido dividido entre el número de sesiones. Te dice si tus sesiones típicas están siendo más o menos exigentes.') +
-    exp('▲ y ▼ del historial', 'Comparan la mejor serie de ese ejercicio con la última vez que lo hiciste. <b>+3</b> significa que has subido 3 kg respecto a la sesión anterior. <b>=</b> es que has repetido peso, que también está bien.') +
+    exp('▲ y ▼ del historial', 'Comparan la mejor serie de ese ejercicio (peso y repeticiones) con la última vez que lo hiciste. <b>+3</b> significa que has subido 3 kg. Si repites el mismo peso pero con menos repeticiones — por ejemplo, fallaste una serie — cuenta como bajada, no como igual. <b>=</b> es solo cuando peso y repeticiones se repiten exactos.') +
     '<button class="btn btn-n" style="margin-top:6px" onclick="closeSheet()">Entendido</button>');
 }
 function exp(t, d) {
